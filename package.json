@@ -1,0 +1,31 @@
+{
+  "name": "jr-digital-license",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@10.5.2",
+  "scripts": {
+    "build": "corepack pnpm --recursive run build",
+    "dev": "corepack pnpm --parallel --stream --filter @jr/api --filter @jr/bot --filter @jr/miniapp run dev",
+    "typecheck": "corepack pnpm --recursive run typecheck",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "db:generate": "corepack pnpm --filter @jr/api run db:generate",
+    "db:validate": "corepack pnpm --filter @jr/api run db:validate"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.20.0",
+    "@playwright/test": "^1.51.0",
+    "@types/node": "^22.13.4",
+    "eslint": "^9.20.0",
+    "eslint-config-prettier": "^10.0.1",
+    "globals": "^15.15.0",
+    "prettier": "^3.5.0",
+    "typescript": "^5.7.3",
+    "typescript-eslint": "^8.24.0",
+    "vitest": "^3.0.5"
+  }
+}

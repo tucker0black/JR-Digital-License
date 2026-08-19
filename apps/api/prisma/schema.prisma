@@ -1,0 +1,654 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  BANNED
+}
+
+enum AdminStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum ProductType {
+  DIGITAL_LINK
+  DIGITAL_CODE
+  DIGITAL_TEXT
+  DIGITAL_FILE
+  DIGITAL_ACCOUNT
+  SMM_API
+}
+
+enum DeliveryType {
+  DIGITAL_LINK
+  DIGITAL_CODE
+  DIGITAL_TEXT
+  DIGITAL_FILE
+  DIGITAL_ACCOUNT
+  MANUAL
+  SMM
+}
+
+enum ProductStatus {
+  ACTIVE
+  DISABLED
+  DRAFT
+  OUT_OF_STOCK
+  ARCHIVED
+}
+
+enum StockStatus {
+  AVAILABLE
+  RESERVED
+  SOLD
+  DISABLED
+}
+
+enum OrderStatus {
+  DRAFT
+  PAYMENT_PENDING
+  PAID
+  PROCESSING
+  FULFILLING
+  COMPLETED
+  CANCELLED
+  EXPIRED
+  DELIVERY_FAILED
+  REFUNDED
+}
+
+enum PaymentStatus {
+  PENDING
+  PROCESSING
+  SUCCEEDED
+  FAILED
+  EXPIRED
+  CANCELLED
+  REFUNDED
+}
+
+enum PaymentProvider {
+  KHQR
+  BAKONG
+  WALLET
+  MANUAL
+}
+
+enum WalletTransactionType {
+  DEPOSIT
+  PURCHASE
+  REFUND
+  ADJUSTMENT
+  BONUS
+}
+
+enum WalletTransactionStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  REVERSED
+}
+
+enum FulfillmentStatus {
+  PENDING
+  PROCESSING
+  DELIVERED
+  FAILED
+  RETRYING
+}
+
+enum LicenseStatus {
+  AVAILABLE
+  RESERVED
+  DELIVERED
+  DISABLED
+}
+
+enum SmmProviderStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum SmmServiceStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum SmmOrderStatus {
+  PENDING
+  PROCESSING
+  IN_PROGRESS
+  COMPLETED
+  PARTIAL
+  CANCELLED
+  FAILED
+  REFUNDED
+}
+
+enum SupportTicketStatus {
+  OPEN
+  IN_PROGRESS
+  WAITING_FOR_CUSTOMER
+  RESOLVED
+  CLOSED
+}
+
+enum SupportMessageSender {
+  USER
+  ADMIN
+  SYSTEM
+}
+
+enum NotificationChannel {
+  TELEGRAM_GROUP
+  TELEGRAM_USER
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  FAILED
+  SUPPRESSED
+}
+
+enum SecurityEventSeverity {
+  INFO
+  WARNING
+  CRITICAL
+}
+
+model User {
+  id             String          @id @default(uuid()) @db.Uuid
+  telegramId     BigInt          @unique
+  username       String?
+  firstName      String
+  lastName       String?
+  photoUrl       String?
+  languageCode   String?
+  status         UserStatus      @default(ACTIVE)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  lastSeenAt     DateTime?
+  wallet         Wallet?
+  orders         Order[]
+  payments       Payment[]
+  tickets        SupportTicket[]
+  notifications  Notification[]
+  securityEvents SecurityEvent[]
+
+  @@index([status])
+  @@index([username])
+}
+
+model Admin {
+  id            String           @id @default(uuid()) @db.Uuid
+  telegramId    BigInt           @unique
+  username      String?
+  firstName     String
+  lastName      String?
+  authTokenHash String?          @unique
+  status        AdminStatus      @default(ACTIVE)
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+  roles         AdminRole[]
+  auditLogs     AuditLog[]
+  replies       SupportMessage[]
+
+  @@index([status])
+}
+
+model Role {
+  id          String           @id @default(uuid()) @db.Uuid
+  key         String           @unique
+  name        String
+  description String?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  admins      AdminRole[]
+  permissions RolePermission[]
+}
+
+model Permission {
+  id          String           @id @default(uuid()) @db.Uuid
+  key         String           @unique
+  description String?
+  createdAt   DateTime         @default(now())
+  roles       RolePermission[]
+}
+
+model AdminRole {
+  adminId    String   @db.Uuid
+  roleId     String   @db.Uuid
+  assignedAt DateTime @default(now())
+  admin      Admin    @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  role       Role     @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([adminId, roleId])
+}
+
+model RolePermission {
+  roleId       String     @db.Uuid
+  permissionId String     @db.Uuid
+  assignedAt   DateTime   @default(now())
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+}
+
+model Category {
+  id          String    @id @default(uuid()) @db.Uuid
+  name        String
+  slug        String    @unique
+  description String?
+  icon        String?
+  imageUrl    String?
+  isActive    Boolean   @default(true)
+  isArchived  Boolean   @default(false)
+  sortOrder   Int       @default(0)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  products    Product[]
+
+  @@index([isActive, isArchived, sortOrder])
+}
+
+model Product {
+  id                 String           @id @default(uuid()) @db.Uuid
+  categoryId         String           @db.Uuid
+  name               String
+  slug               String           @unique
+  description        String?
+  imageUrl           String?
+  type               ProductType
+  deliveryType       DeliveryType
+  price              Decimal          @db.Decimal(18, 2)
+  currency           String           @default("USD") @db.VarChar(3)
+  costPrice          Decimal?         @db.Decimal(18, 2)
+  markup             Decimal?         @db.Decimal(8, 2)
+  minimumQuantity    Int              @default(1)
+  maximumQuantity    Int?
+  hideWhenOutOfStock Boolean          @default(false)
+  status             ProductStatus    @default(DRAFT)
+  isActive           Boolean          @default(true)
+  isFeatured         Boolean          @default(false)
+  isPopular          Boolean          @default(false)
+  sortOrder          Int              @default(0)
+  instructions       String?
+  keywords           String[]         @default([])
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+  category           Category         @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  variants           ProductVariant[]
+  stock              ProductStock[]
+  licenses           License[]
+  orderItems         OrderItem[]
+  smmService         SmmService?
+
+  @@index([categoryId, status, isActive, sortOrder])
+  @@index([isFeatured, status, isActive, sortOrder])
+  @@index([isPopular, status, isActive, sortOrder])
+}
+
+model ProductVariant {
+  id         String         @id @default(uuid()) @db.Uuid
+  productId  String         @db.Uuid
+  name       String
+  sku        String?        @unique
+  price      Decimal?       @db.Decimal(18, 2)
+  attributes Json?
+  isActive   Boolean        @default(true)
+  sortOrder  Int            @default(0)
+  createdAt  DateTime       @default(now())
+  updatedAt  DateTime       @updatedAt
+  product    Product        @relation(fields: [productId], references: [id], onDelete: Cascade)
+  stock      ProductStock[]
+  orderItems OrderItem[]
+
+  @@index([productId, isActive, sortOrder])
+}
+
+model ProductStock {
+  id            String          @id @default(uuid()) @db.Uuid
+  productId     String          @db.Uuid
+  variantId     String?         @db.Uuid
+  deliveryValue String
+  deliveryType  DeliveryType
+  status        StockStatus     @default(AVAILABLE)
+  orderId       String?         @db.Uuid
+  reservedAt    DateTime?
+  soldAt        DateTime?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  product       Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
+  variant       ProductVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+  order         Order?          @relation(fields: [orderId], references: [id], onDelete: SetNull)
+
+  @@index([productId, status])
+  @@index([variantId, status])
+  @@index([orderId])
+}
+
+model Order {
+  id             String          @id @default(uuid()) @db.Uuid
+  orderNumber    Int             @unique @default(autoincrement())
+  userId         String          @db.Uuid
+  status         OrderStatus     @default(DRAFT)
+  currency       String          @default("USD") @db.VarChar(3)
+  subtotal       Decimal         @db.Decimal(18, 2)
+  discount       Decimal         @default(0) @db.Decimal(18, 2)
+  total          Decimal         @db.Decimal(18, 2)
+  idempotencyKey String?         @unique
+  expiresAt      DateTime?
+  paidAt         DateTime?
+  completedAt    DateTime?
+  cancelledAt    DateTime?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  user           User            @relation(fields: [userId], references: [id], onDelete: Restrict)
+  items          OrderItem[]
+  payments       Payment[]
+  stock          ProductStock[]
+  smmOrders      SmmOrder[]
+  licenses       License[]
+  tickets        SupportTicket[]
+
+  @@index([userId, createdAt])
+  @@index([status, createdAt])
+}
+
+model OrderItem {
+  id                        String             @id @default(uuid()) @db.Uuid
+  orderId                   String             @db.Uuid
+  productId                 String?            @db.Uuid
+  variantId                 String?            @db.Uuid
+  productNameSnapshot       String
+  unitPriceSnapshot         Decimal            @db.Decimal(18, 2)
+  quantitySnapshot          Int
+  totalSnapshot             Decimal            @db.Decimal(18, 2)
+  currencySnapshot          String             @db.VarChar(3)
+  deliveryTypeSnapshot      DeliveryType
+  providerServiceIdSnapshot String?
+  target                    String?
+  createdAt                 DateTime           @default(now())
+  order                     Order              @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product                   Product?           @relation(fields: [productId], references: [id], onDelete: SetNull)
+  variant                   ProductVariant?    @relation(fields: [variantId], references: [id], onDelete: SetNull)
+  fulfillment               FulfillmentRecord?
+  licenses                  License[]
+
+  @@index([orderId])
+  @@index([productId])
+}
+
+model FulfillmentRecord {
+  id            String            @id @default(uuid()) @db.Uuid
+  orderItemId   String            @unique @db.Uuid
+  status        FulfillmentStatus @default(PENDING)
+  deliveryRef   String?           @unique
+  deliveredAt   DateTime?
+  failureReason String?
+  attemptCount  Int               @default(0)
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+  orderItem     OrderItem         @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+
+  @@index([status, updatedAt])
+}
+
+model Payment {
+  id                       String              @id @default(uuid()) @db.Uuid
+  orderId                  String?             @db.Uuid
+  userId                   String              @db.Uuid
+  provider                 PaymentProvider
+  status                   PaymentStatus       @default(PENDING)
+  amount                   Decimal             @db.Decimal(18, 2)
+  currency                 String              @db.VarChar(3)
+  reference                String              @unique
+  providerPaymentId        String?             @unique
+  idempotencyKey           String              @unique
+  providerTransactionHash  String?             @unique
+  expiresAt                DateTime?
+  paidAt                   DateTime?
+  metadata                 Json?
+  createdAt                DateTime            @default(now())
+  updatedAt                DateTime            @updatedAt
+  order                    Order?              @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  user                     User                @relation(fields: [userId], references: [id], onDelete: Restrict)
+  events                   PaymentEvent[]
+  walletTransactions       WalletTransaction[]
+
+  @@index([orderId])
+  @@index([userId, createdAt])
+  @@index([status, expiresAt])
+}
+
+model PaymentEvent {
+  id              String    @id @default(uuid()) @db.Uuid
+  paymentId       String    @db.Uuid
+  providerEventId String?   @unique
+  eventType       String
+  payload         Json
+  processedAt     DateTime?
+  createdAt       DateTime  @default(now())
+  payment         Payment   @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+
+  @@index([paymentId, createdAt])
+}
+
+model Wallet {
+  id           String              @id @default(uuid()) @db.Uuid
+  userId       String              @unique @db.Uuid
+  currency     String              @default("USD") @db.VarChar(3)
+  balance      Decimal             @default(0) @db.Decimal(18, 2)
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+  user         User                @relation(fields: [userId], references: [id], onDelete: Restrict)
+  transactions WalletTransaction[]
+}
+
+model WalletTransaction {
+  id            String                  @id @default(uuid()) @db.Uuid
+  walletId      String                  @db.Uuid
+  paymentId     String?                 @db.Uuid
+  type          WalletTransactionType
+  status        WalletTransactionStatus @default(PENDING)
+  amount        Decimal                 @db.Decimal(18, 2)
+  currency      String                  @db.VarChar(3)
+  balanceBefore Decimal                 @db.Decimal(18, 2)
+  balanceAfter  Decimal                 @db.Decimal(18, 2)
+  reference     String                  @unique
+  reason        String?
+  createdAt     DateTime                @default(now())
+  wallet        Wallet                  @relation(fields: [walletId], references: [id], onDelete: Restrict)
+  payment       Payment?                @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+
+  @@index([walletId, createdAt])
+  @@unique([paymentId])
+}
+
+model SmmProvider {
+  id              String            @id @default(uuid()) @db.Uuid
+  name            String            @unique
+  apiUrl          String
+  encryptedApiKey String
+  status          SmmProviderStatus @default(ACTIVE)
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  services        SmmService[]
+  orders          SmmOrder[]
+
+  @@index([status])
+}
+
+model SmmService {
+  id                String           @id @default(uuid()) @db.Uuid
+  providerId        String           @db.Uuid
+  productId         String?          @unique @db.Uuid
+  providerServiceId String
+  name              String
+  providerCost      Decimal?         @db.Decimal(18, 2)
+  minimumQuantity   Int
+  maximumQuantity   Int
+  status            SmmServiceStatus @default(ACTIVE)
+  metadata          Json?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  provider          SmmProvider      @relation(fields: [providerId], references: [id], onDelete: Restrict)
+  product           Product?         @relation(fields: [productId], references: [id], onDelete: SetNull)
+  orders            SmmOrder[]
+
+  @@unique([providerId, providerServiceId])
+  @@index([status])
+}
+
+model SmmOrder {
+  id                 String         @id @default(uuid()) @db.Uuid
+  orderId            String         @db.Uuid
+  smmServiceId       String         @db.Uuid
+  providerId         String         @db.Uuid
+  providerOrderId    String?        @unique
+  target             String
+  quantity           Int
+  status             SmmOrderStatus @default(PENDING)
+  lastProviderStatus String?
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+  order              Order          @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  service            SmmService     @relation(fields: [smmServiceId], references: [id], onDelete: Restrict)
+  provider           SmmProvider    @relation(fields: [providerId], references: [id], onDelete: Restrict)
+
+  @@index([status, updatedAt])
+  @@index([orderId])
+}
+
+model License {
+  id           String        @id @default(uuid()) @db.Uuid
+  productId    String        @db.Uuid
+  value        String        // Encrypted license key/value
+  status       LicenseStatus @default(AVAILABLE)
+  orderId      String?       @db.Uuid
+  orderItemId  String?       @db.Uuid
+  reservedAt   DateTime?
+  deliveredAt  DateTime?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  product      Product       @relation(fields: [productId], references: [id], onDelete: Cascade)
+  order        Order?        @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  orderItem    OrderItem?    @relation(fields: [orderItemId], references: [id], onDelete: SetNull)
+
+  @@index([productId, status])
+  @@index([orderId])
+  @@index([orderItemId])
+}
+
+model SupportTicket {
+  id        String              @id @default(uuid()) @db.Uuid
+  number    Int                 @unique @default(autoincrement())
+  userId    String              @db.Uuid
+  orderId   String?             @db.Uuid
+  subject   String
+  status    SupportTicketStatus @default(OPEN)
+  createdAt DateTime            @default(now())
+  updatedAt DateTime            @updatedAt
+  user      User                @relation(fields: [userId], references: [id], onDelete: Restrict)
+  order     Order?              @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  messages  SupportMessage[]
+
+  @@index([userId, createdAt])
+  @@index([status, updatedAt])
+}
+
+model SupportMessage {
+  id             String               @id @default(uuid()) @db.Uuid
+  ticketId       String               @db.Uuid
+  userId         String?              @db.Uuid
+  adminId        String?              @db.Uuid
+  sender         SupportMessageSender @default(USER)
+  body           String
+  customerReadAt DateTime?            @default(now())
+  adminReadAt    DateTime?            @default(now())
+  createdAt      DateTime             @default(now())
+  ticket         SupportTicket        @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  admin          Admin?               @relation(fields: [adminId], references: [id], onDelete: SetNull)
+
+  @@index([ticketId, createdAt])
+}
+
+model TelegramNotificationTarget {
+  id         String              @id @default(uuid()) @db.Uuid
+  chatId     BigInt              @unique
+  name       String
+  channel    NotificationChannel @default(TELEGRAM_GROUP)
+  eventTypes String[]            @default([])
+  isActive   Boolean             @default(true)
+  createdAt  DateTime            @default(now())
+  updatedAt  DateTime            @updatedAt
+
+  @@index([isActive])
+}
+
+model Notification {
+  id            String              @id @default(uuid()) @db.Uuid
+  userId        String?             @db.Uuid
+  channel       NotificationChannel
+  eventType     String
+  status        NotificationStatus  @default(PENDING)
+  destination   String
+  payload       Json
+  sentAt        DateTime?
+  failureReason String?
+  createdAt     DateTime            @default(now())
+  user          User?               @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([status, createdAt])
+  @@index([eventType, createdAt])
+}
+
+model AuditLog {
+  id         String   @id @default(uuid()) @db.Uuid
+  adminId    String?  @db.Uuid
+  entityType String
+  entityId   String?
+  action     String
+  oldValue   Json?
+  newValue   Json?
+  ipAddress  String?
+  createdAt  DateTime @default(now())
+  admin      Admin?   @relation(fields: [adminId], references: [id], onDelete: SetNull)
+
+  @@index([entityType, entityId, createdAt])
+  @@index([adminId, createdAt])
+}
+
+model SecurityEvent {
+  id        String                @id @default(uuid()) @db.Uuid
+  userId    String?               @db.Uuid
+  eventType String
+  severity  SecurityEventSeverity @default(INFO)
+  ipAddress String?
+  metadata  Json?
+  createdAt DateTime              @default(now())
+  user      User?                 @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([severity, createdAt])
+  @@index([eventType, createdAt])
+}
+
+model ApplicationSetting {
+  id          String   @id @default(uuid()) @db.Uuid
+  key         String   @unique
+  value       Json
+  description String?
+  isSecret    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
