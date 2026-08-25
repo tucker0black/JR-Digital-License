@@ -3,8 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "packageManager": "pnpm@10.5.2",
+  "engines": {
+    "node": "22.x",
+    "pnpm": "10.5.2"
+  },
   "scripts": {
     "build": "corepack pnpm --recursive run build",
+    "start": "node apps/bot/dist/index.js",
     "dev": "corepack pnpm --parallel --stream --filter @jr/api --filter @jr/bot --filter @jr/miniapp run dev",
     "typecheck": "corepack pnpm --recursive run typecheck",
     "lint": "eslint .",
