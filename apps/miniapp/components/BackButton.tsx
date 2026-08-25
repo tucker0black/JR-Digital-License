@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
+import { useTranslation } from '@/lib/i18n';
 
 const NAV_HISTORY_KEY = 'jr_in_app_navigation';
 
@@ -13,6 +14,7 @@ function hasUsableHistory(): boolean {
 export function BackButton() {
   const pathname = usePathname();
   const router = useRouter();
+  const { t } = useTranslation();
   const [showFallback, setShowFallback] = useState(false);
 
   const isHome = pathname === '/';
@@ -68,8 +70,8 @@ export function BackButton() {
     <button
       type="button"
       onClick={goBack}
-      aria-label="Go back"
-      className="rounded-lg p-2 text-soft transition hover:bg-muted hover:text-primary"
+      aria-label={t('generic.goBack')}
+      className="rounded-xl p-2 text-soft transition-default hover:bg-muted hover:text-primary"
     >
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
         <path d="M19 12H5" />

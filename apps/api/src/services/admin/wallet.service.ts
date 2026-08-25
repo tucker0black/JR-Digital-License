@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import type { PrismaClient, WalletTransactionType } from '@prisma/client';
 import { Prisma, WalletTransactionStatus } from '@prisma/client';
+import { customerIdFromTelegramId } from '@jr/shared';
 
 export interface WalletFilters {
   search?: string;
@@ -55,7 +56,8 @@ export class AdminWalletService {
         user: wallet.user
           ? {
               ...wallet.user,
-              telegramId: wallet.user.telegramId.toString()
+              telegramId: wallet.user.telegramId.toString(),
+              customerId: customerIdFromTelegramId(wallet.user.telegramId)
             }
           : null
       })),
@@ -90,7 +92,8 @@ export class AdminWalletService {
         balance: wallet.balance.toString(),
         user: {
           ...wallet.user,
-          telegramId: wallet.user.telegramId.toString()
+          telegramId: wallet.user.telegramId.toString(),
+          customerId: customerIdFromTelegramId(wallet.user.telegramId)
         }
       },
       transactions: transactions.map(serializeTransaction),

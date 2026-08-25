@@ -2,6 +2,108 @@ import { z } from 'zod';
 
 export const appName = 'JR Digital license';
 
+/**
+ * Languages supported by the customer-facing Telegram bot (and shared with the
+ * Mini App). A user's chosen language is persisted on their account so it
+ * survives bot/API/process restarts.
+ */
+export const supportedLanguages = ['km', 'en'] as const;
+
+export type SupportedLanguage = (typeof supportedLanguages)[number];
+
+/** The language used whenever no preference is known yet (API unreachable, etc.). */
+export const defaultLanguage: SupportedLanguage = 'km';
+
+/**
+ * Normalize an arbitrary value into a supported language, or null when the
+ * value is not one of the supported languages. Accepts Telegram-style codes
+ * such as 'km', 'km-KH' and 'en-US'.
+ */
+export function normalizeSupportedLanguage(value: unknown): SupportedLanguage | null {
+  if (typeof value !== 'string') return null;
+  const [base] = value.trim().toLowerCase().split('-');
+  if (!base) return null;
+  return (supportedLanguages as readonly string[]).includes(base)
+    ? (base as SupportedLanguage)
+    : null;
+}
+
+/**
+ * Deterministic, customer-facing ID derived from the Telegram ID.
+ * Used in the Mini App and admin dashboard so customers can be
+ * identified without exposing any internal database identifier.
+ * Example: telegramId 123456789 -> ID123456789
+ */
+export function customerIdFromTelegramId(telegramId: bigint | string | number): string {
+  return `ID${telegramId.toString()}`;
+}
+
+/**
+ * Normalize recognized Google Drive sharing URLs into direct-render image URLs
+ * so they display inside <img> tags.
+ *
+ * Only exact drive.google.com patterns are transformed:
+ *   https://drive.google.com/file/d/<ID>/view?usp=sharing
+ *   https://drive.google.com/open?id=<ID>
+ *   https://drive.google.com/uc?id=<ID> (any export= variant)
+ *
+ * The target is Google's supported direct-render endpoint
+ * (drive.google.com/thumbnail?id=<ID>&sz=…) because the legacy
+ * /uc?export=view format has been deprecated and frequently returns an HTML
+ * page instead of image bytes. The Drive file itself must still be shared as
+ * "Anyone with the link" — no server-side fetching happens here (SSRF-safe).
+ *
+ * Every other absolute HTTP(S) URL (Cloudinary delivery URLs with or without
+ * transformations/folders, plain CDN links, …) is passed through unchanged so
+ * valid delivery URLs are never damaged. Absolute URLs using unsafe protocols
+ * (javascript:, data:, file:, vbscript:, …) are rejected with null so they can
+ * never reach an <img src>.
+ */
+const UNSAFE_BANNER_PROTOCOLS = new Set(['javascript:', 'data:', 'vbscript:', 'file:', 'blob:', 'about:']);
+
+export function normalizeBannerImageUrl(url: string | null | undefined): string | null {
+  if (typeof url !== 'string') return null;
+  const trimmed = url.trim();
+  if (!trimmed) return null;
+
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    // Not an absolute URL (relative path or garbage) — pass through untouched.
+    return trimmed;
+  }
+
+  if (UNSAFE_BANNER_PROTOCOLS.has(parsed.protocol)) {
+    return null;
+  }
+
+  if (parsed.protocol !== 'https:' || parsed.hostname !== 'drive.google.com') {
+    return trimmed;
+  }
+
+  const driveFileMatch = parsed.pathname.match(/^\/file\/d\/([A-Za-z0-9_-]+)(?:\/.*)?$/);
+  const fromThumbnail = parsed.pathname === '/thumbnail' ? parsed.searchParams.get('id') : null;
+  let fileId = driveFileMatch?.[1] ?? null;
+
+  if (!fileId && fromThumbnail && /^[A-Za-z0-9_-]+$/.test(fromThumbnail)) {
+    fileId = fromThumbnail;
+  }
+
+  if (!fileId && (parsed.pathname === '/open' || parsed.pathname === '/uc')) {
+    const idParam = parsed.searchParams.get('id');
+    if (idParam && /^[A-Za-z0-9_-]+$/.test(idParam)) {
+      fileId = idParam;
+    }
+  }
+
+  if (fileId) {
+    return `https://drive.google.com/thumbnail?id=${fileId}&sz=w1600`;
+  }
+
+  return trimmed;
+}
+
 export const healthResponseSchema = z.object({
   status: z.literal('ok'),
   service: z.string(),
@@ -49,6 +151,7 @@ export const productSchema = z.object({
   sortOrder: z.number().int(),
   instructions: z.string().nullable(),
   keywords: z.array(z.string()),
+  isHandDelivery: z.boolean(),
   createdAt: z.string(),
   updatedAt: z.string()
 });
@@ -299,7 +402,9 @@ export const createProductRequestSchema = z.object({
   isPopular: z.boolean().optional(),
   sortOrder: z.number().int().optional(),
   instructions: z.string().nullable().optional(),
-  keywords: z.array(z.string()).optional()
+  keywords: z.array(z.string()).optional(),
+  isHandDelivery: z.boolean().optional(),
+  smmServiceIds: z.array(z.string().uuid()).optional()
 });
 
 export type CreateProductRequest = z.infer<typeof createProductRequestSchema>;
@@ -325,7 +430,9 @@ export const updateProductRequestSchema = z.object({
   isPopular: z.boolean().optional(),
   sortOrder: z.number().int().optional(),
   instructions: z.string().nullable().optional(),
-  keywords: z.array(z.string()).optional()
+  keywords: z.array(z.string()).optional(),
+  isHandDelivery: z.boolean().optional(),
+  smmServiceIds: z.array(z.string().uuid()).optional()
 });
 
 export type UpdateProductRequest = z.infer<typeof updateProductRequestSchema>;
@@ -368,6 +475,7 @@ export const productDetailSchema = z.object({
   sortOrder: z.number().int(),
   instructions: z.string().nullable(),
   keywords: z.array(z.string()),
+  isHandDelivery: z.boolean(),
   createdAt: z.string(),
   updatedAt: z.string(),
   category: z.object({
@@ -380,7 +488,18 @@ export const productDetailSchema = z.object({
     reserved: z.number().int(),
     sold: z.number().int(),
     disabled: z.number().int()
-  })
+  }),
+  smmServices: z.array(z.object({
+    id: z.string().uuid(),
+    providerId: z.string().uuid(),
+    providerServiceId: z.string(),
+    name: z.string(),
+    status: z.enum(['ACTIVE', 'DISABLED']),
+    provider: z.object({
+      id: z.string().uuid(),
+      name: z.string()
+    })
+  })).optional()
 });
 
 export type ProductDetail = z.infer<typeof productDetailSchema>;
@@ -474,6 +593,7 @@ export const orderDetailSchema = z.object({
   user: z.object({
     id: z.string().uuid(),
     telegramId: z.string(),
+    customerId: z.string(),
     username: z.string().nullable(),
     firstName: z.string(),
     lastName: z.string().nullable()
@@ -495,8 +615,12 @@ export const orderDetailSchema = z.object({
       id: z.string().uuid(),
       name: z.string(),
       slug: z.string(),
-      imageUrl: z.string().nullable()
-    }).nullable()
+      imageUrl: z.string().nullable(),
+      isHandDelivery: z.boolean()
+    }).nullable(),
+    fulfillment: z.object({
+      status: z.string()
+    }).nullable().optional()
   })),
   payments: z.array(z.object({
     id: z.string().uuid(),
@@ -505,6 +629,8 @@ export const orderDetailSchema = z.object({
     amount: z.string(),
     currency: z.string(),
     reference: z.string(),
+    providerTransactionHash: z.string().nullable(),
+    expiresAt: z.string().nullable(),
     paidAt: z.string().nullable(),
     createdAt: z.string()
   }))
@@ -784,6 +910,7 @@ export type UserFilters = z.infer<typeof userFiltersSchema>;
 export const userSchema = z.object({
   id: z.string().uuid(),
   telegramId: z.string(),
+  customerId: z.string(),
   username: z.string().nullable(),
   firstName: z.string(),
   lastName: z.string().nullable(),
@@ -915,6 +1042,7 @@ export const walletDetailSchema = z.object({
     user: z.object({
       id: z.string().uuid(),
       telegramId: z.string(),
+      customerId: z.string(),
       username: z.string().nullable(),
       firstName: z.string(),
       lastName: z.string().nullable()
@@ -965,6 +1093,7 @@ export const ticketSchema = z.object({
   user: z.object({
     id: z.string().uuid(),
     telegramId: z.string(),
+    customerId: z.string(),
     username: z.string().nullable(),
     displayName: z.string().nullable(),
     usernameHandle: z.string().nullable(),
@@ -1113,13 +1242,14 @@ export const adminPaymentSchema = paymentSchema.extend({
     id: z.string().uuid(),
     orderNumber: z.number().int()
   }).nullable(),
-  user: z.object({
+user: z.object({
     id: z.string().uuid(),
     telegramId: z.string(),
+    customerId: z.string(),
     username: z.string().nullable(),
     firstName: z.string(),
     lastName: z.string().nullable()
-  }).nullable()
+  }).nullable(),
 });
 
 export type AdminPayment = z.infer<typeof adminPaymentSchema>;
@@ -1280,3 +1410,441 @@ export const bulkProductActionResponseSchema = z.object({
 });
 
 export type BulkProductActionResponse = z.infer<typeof bulkProductActionResponseSchema>;
+
+// ---------- Security Events ----------
+
+export const securityEventSeveritySchema = z.enum(['INFO', 'WARNING', 'CRITICAL']);
+export type SecurityEventSeverity = z.infer<typeof securityEventSeveritySchema>;
+
+export const securityEventSchema = z.object({
+  id: z.string().uuid(),
+  eventType: z.string(),
+  severity: securityEventSeveritySchema,
+  ipAddress: z.string().nullable(),
+  userId: z.string().uuid().nullable(),
+  metadata: z.unknown().nullable(),
+  createdAt: z.string()
+});
+
+export type SecurityEvent = z.infer<typeof securityEventSchema>;
+
+export const securityEventsResponseSchema = z.object({
+  events: z.array(securityEventSchema),
+  total: z.number().int(),
+  page: z.number().int(),
+  pageSize: z.number().int()
+});
+
+export type SecurityEventsResponse = z.infer<typeof securityEventsResponseSchema>;
+
+export const securityEventFiltersSchema = z.object({
+  eventType: z.string().optional(),
+  severity: securityEventSeveritySchema.optional(),
+  search: z.string().optional(),
+  page: z.number().int().min(1).optional(),
+  pageSize: z.number().int().min(1).max(100).optional()
+});
+
+export type SecurityEventFilters = z.infer<typeof securityEventFiltersSchema>;
+
+// ---------- Support availability ----------
+
+export const supportAvailabilitySchema = z.object({
+  isOpen: z.boolean(),
+  openTime: z.string(),
+  closeTime: z.string(),
+  timezoneLabel: z.string(),
+  serverTime: z.string()
+});
+
+export type SupportAvailability = z.infer<typeof supportAvailabilitySchema>;
+
+// ---------- Banners ----------
+
+export const bannerTargetTypeSchema = z.enum(['HOME', 'CATEGORY', 'PRODUCT', 'PROMOTION', 'PAGE']);
+export type BannerTargetType = z.infer<typeof bannerTargetTypeSchema>;
+
+export const bannerSchema = z.object({
+  id: z.string().uuid(),
+  title: z.string(),
+  subtitle: z.string().nullable(),
+  imageUrl: z.string().nullable(),
+  buttonText: z.string().nullable(),
+  buttonDestination: z.string().nullable(),
+  targetType: bannerTargetTypeSchema,
+  targetCategoryId: z.string().uuid().nullable(),
+  targetProductId: z.string().uuid().nullable(),
+  targetPage: z.string().nullable(),
+  isActive: z.boolean(),
+  sortOrder: z.number().int(),
+  startsAt: z.string().nullable(),
+  endsAt: z.string().nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string()
+});
+
+export type Banner = z.infer<typeof bannerSchema>;
+
+export const bannerDetailSchema = bannerSchema.extend({
+  targetCategory: z.object({
+    id: z.string().uuid(),
+    name: z.string(),
+    slug: z.string()
+  }).nullable(),
+  targetProduct: z.object({
+    id: z.string().uuid(),
+    name: z.string(),
+    slug: z.string()
+  }).nullable()
+});
+
+export type BannerDetail = z.infer<typeof bannerDetailSchema>;
+
+export const bannersResponseSchema = z.object({
+  banners: z.array(bannerDetailSchema),
+  total: z.number().int(),
+  page: z.number().int(),
+  pageSize: z.number().int()
+});
+
+export type BannersResponse = z.infer<typeof bannersResponseSchema>;
+
+export const createBannerRequestSchema = z.object({
+  title: z.string().min(1).max(255),
+  subtitle: z.string().max(500).nullable().optional(),
+  imageUrl: z.string().max(2000).nullable().optional(),
+  buttonText: z.string().max(100).nullable().optional(),
+  buttonDestination: z.string().max(500).nullable().optional(),
+  targetType: bannerTargetTypeSchema.optional(),
+  targetCategoryId: z.string().uuid().nullable().optional(),
+  targetProductId: z.string().uuid().nullable().optional(),
+  targetPage: z.string().max(200).nullable().optional(),
+  isActive: z.boolean().optional(),
+  sortOrder: z.number().int().optional(),
+  startsAt: z.string().nullable().optional(),
+  endsAt: z.string().nullable().optional()
+});
+
+export type CreateBannerRequest = z.infer<typeof createBannerRequestSchema>;
+
+export const updateBannerRequestSchema = z.object({
+  title: z.string().min(1).max(255).optional(),
+  subtitle: z.string().max(500).nullable().optional(),
+  imageUrl: z.string().max(2000).nullable().optional(),
+  buttonText: z.string().max(100).nullable().optional(),
+  buttonDestination: z.string().max(500).nullable().optional(),
+  targetType: bannerTargetTypeSchema.optional(),
+  targetCategoryId: z.string().uuid().nullable().optional(),
+  targetProductId: z.string().uuid().nullable().optional(),
+  targetPage: z.string().max(200).nullable().optional(),
+  isActive: z.boolean().optional(),
+  sortOrder: z.number().int().optional(),
+  startsAt: z.string().nullable().optional(),
+  endsAt: z.string().nullable().optional()
+});
+
+export type UpdateBannerRequest = z.infer<typeof updateBannerRequestSchema>;
+
+export const customerBannerSchema = z.object({
+  id: z.string().uuid(),
+  title: z.string(),
+  subtitle: z.string().nullable(),
+  imageUrl: z.string().nullable(),
+  buttonText: z.string().nullable(),
+  buttonDestination: z.string().nullable(),
+  targetType: bannerTargetTypeSchema,
+  targetCategoryId: z.string().uuid().nullable(),
+  targetProductId: z.string().uuid().nullable(),
+  targetPage: z.string().nullable()
+});
+
+export type CustomerBanner = z.infer<typeof customerBannerSchema>;
+
+export const customerBannersResponseSchema = z.object({
+  banners: z.array(customerBannerSchema)
+});
+
+export type CustomerBannersResponse = z.infer<typeof customerBannersResponseSchema>;
+
+// ---------- Flash Deals ----------
+
+export const flashDealDiscountTypeSchema = z.enum(['PERCENTAGE', 'FIXED']);
+export type FlashDealDiscountType = z.infer<typeof flashDealDiscountTypeSchema>;
+
+export const flashDealSchema = z.object({
+  id: z.string().uuid(),
+  productId: z.string().uuid(),
+  discountType: flashDealDiscountTypeSchema,
+  discountValue: z.string(),
+  salePrice: z.string(),
+  isActive: z.boolean(),
+  sortOrder: z.number().int(),
+  startsAt: z.string().nullable(),
+  endsAt: z.string().nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string()
+});
+
+export type FlashDeal = z.infer<typeof flashDealSchema>;
+
+export const flashDealDetailSchema = flashDealSchema.extend({
+  product: z.object({
+    id: z.string().uuid(),
+    name: z.string(),
+    slug: z.string(),
+    price: z.string(),
+    currency: z.string(),
+    imageUrl: z.string().nullable(),
+    deliveryType: z.string(),
+    isOutOfStock: z.boolean().optional(),
+    category: z.object({
+      id: z.string().uuid(),
+      name: z.string(),
+      slug: z.string()
+    }).nullable().optional()
+  })
+});
+
+export type FlashDealDetail = z.infer<typeof flashDealDetailSchema>;
+
+export const flashDealsResponseSchema = z.object({
+  deals: z.array(flashDealDetailSchema),
+  total: z.number().int(),
+  page: z.number().int(),
+  pageSize: z.number().int()
+});
+
+export type FlashDealsResponse = z.infer<typeof flashDealsResponseSchema>;
+
+export const createFlashDealRequestSchema = z.object({
+  productId: z.string().uuid(),
+  discountType: flashDealDiscountTypeSchema,
+  discountValue: z.union([z.string(), z.number()]),
+  isActive: z.boolean().optional(),
+  sortOrder: z.number().int().optional(),
+  startsAt: z.string().nullable().optional(),
+  endsAt: z.string().nullable().optional()
+});
+
+export type CreateFlashDealRequest = z.infer<typeof createFlashDealRequestSchema>;
+
+export const updateFlashDealRequestSchema = z.object({
+  discountType: flashDealDiscountTypeSchema.optional(),
+  discountValue: z.union([z.string(), z.number()]).optional(),
+  isActive: z.boolean().optional(),
+  sortOrder: z.number().int().optional(),
+  startsAt: z.string().nullable().optional(),
+  endsAt: z.string().nullable().optional()
+});
+
+export type UpdateFlashDealRequest = z.infer<typeof updateFlashDealRequestSchema>;
+
+export const customerFlashDealSchema = z.object({
+  id: z.string().uuid(),
+  productId: z.string().uuid(),
+  discountType: flashDealDiscountTypeSchema,
+  discountValue: z.string(),
+  salePrice: z.string(),
+  startsAt: z.string().nullable(),
+  endsAt: z.string().nullable(),
+  product: z.object({
+    id: z.string().uuid(),
+    name: z.string(),
+    slug: z.string(),
+    price: z.string(),
+    currency: z.string(),
+    imageUrl: z.string().nullable(),
+    deliveryType: z.string(),
+    isOutOfStock: z.boolean().optional()
+  })
+});
+
+export type CustomerFlashDeal = z.infer<typeof customerFlashDealSchema>;
+
+export const customerFlashDealsResponseSchema = z.object({
+  deals: z.array(customerFlashDealSchema)
+});
+
+export type CustomerFlashDealsResponse = z.infer<typeof customerFlashDealsResponseSchema>;
+
+// ---------- Favorites ----------
+
+export const favoriteSchema = z.object({
+  id: z.string().uuid(),
+  userId: z.string().uuid(),
+  productId: z.string().uuid(),
+  createdAt: z.string()
+});
+
+export type Favorite = z.infer<typeof favoriteSchema>;
+
+export const favoriteDetailSchema = favoriteSchema.extend({
+  product: z.object({
+    id: z.string().uuid(),
+    name: z.string(),
+    slug: z.string(),
+    price: z.string(),
+    currency: z.string(),
+    imageUrl: z.string().nullable(),
+    deliveryType: z.string(),
+    status: z.string(),
+    isActive: z.boolean(),
+    isOutOfStock: z.boolean().optional(),
+    category: z.object({
+      id: z.string().uuid(),
+      name: z.string(),
+      slug: z.string()
+    }).nullable().optional()
+  })
+});
+
+export type FavoriteDetail = z.infer<typeof favoriteDetailSchema>;
+
+export const favoritesResponseSchema = z.object({
+  favorites: z.array(favoriteDetailSchema),
+  total: z.number().int(),
+  page: z.number().int(),
+  pageSize: z.number().int()
+});
+
+export type FavoritesResponse = z.infer<typeof favoritesResponseSchema>;
+
+export const favoriteCheckResponseSchema = z.object({
+  isFavorited: z.boolean()
+});
+
+export type FavoriteCheckResponse = z.infer<typeof favoriteCheckResponseSchema>;
+
+// ---------- Coupons ----------
+
+export const couponDiscountTypeSchema = z.enum(['PERCENTAGE', 'FIXED']);
+export type CouponDiscountType = z.infer<typeof couponDiscountTypeSchema>;
+
+export const couponSchema = z.object({
+  id: z.string().uuid(),
+  code: z.string(),
+  discountType: couponDiscountTypeSchema,
+  discountValue: z.string(),
+  minimumOrderAmount: z.string().nullable(),
+  maximumDiscountAmount: z.string().nullable(),
+  startAt: z.string().nullable(),
+  endAt: z.string().nullable(),
+  usageLimit: z.number().int().nullable(),
+  perUserLimit: z.number().int().nullable(),
+  isActive: z.boolean(),
+  restrictedProductId: z.string().uuid().nullable(),
+  restrictedCategoryId: z.string().uuid().nullable(),
+  usageCount: z.number().int(),
+  createdAt: z.string(),
+  updatedAt: z.string()
+});
+
+export type Coupon = z.infer<typeof couponSchema>;
+
+export const couponDetailSchema = couponSchema.extend({
+  restrictedProduct: z.object({
+    id: z.string().uuid(),
+    name: z.string(),
+    slug: z.string(),
+    price: z.string(),
+    imageUrl: z.string().nullable()
+  }).nullable(),
+  restrictedCategory: z.object({
+    id: z.string().uuid(),
+    name: z.string(),
+    slug: z.string()
+  }).nullable()
+});
+
+export type CouponDetail = z.infer<typeof couponDetailSchema>;
+
+export const createCouponRequestSchema = z.object({
+  code: z.string().min(1).max(50),
+  discountType: couponDiscountTypeSchema,
+  discountValue: z.union([z.string(), z.number()]),
+  minimumOrderAmount: z.union([z.string(), z.number()]).nullable().optional(),
+  maximumDiscountAmount: z.union([z.string(), z.number()]).nullable().optional(),
+  startAt: z.string().nullable().optional(),
+  endAt: z.string().nullable().optional(),
+  usageLimit: z.number().int().nullable().optional(),
+  perUserLimit: z.number().int().nullable().optional(),
+  isActive: z.boolean().optional(),
+  restrictedProductId: z.string().uuid().nullable().optional(),
+  restrictedCategoryId: z.string().uuid().nullable().optional()
+});
+
+export type CreateCouponRequest = z.infer<typeof createCouponRequestSchema>;
+
+export const updateCouponRequestSchema = z.object({
+  code: z.string().min(1).max(50).optional(),
+  discountType: couponDiscountTypeSchema.optional(),
+  discountValue: z.union([z.string(), z.number()]).optional(),
+  minimumOrderAmount: z.union([z.string(), z.number()]).nullable().optional(),
+  maximumDiscountAmount: z.union([z.string(), z.number()]).nullable().optional(),
+  startAt: z.string().nullable().optional(),
+  endAt: z.string().nullable().optional(),
+  usageLimit: z.number().int().nullable().optional(),
+  perUserLimit: z.number().int().nullable().optional(),
+  isActive: z.boolean().optional(),
+  restrictedProductId: z.string().uuid().nullable().optional(),
+  restrictedCategoryId: z.string().uuid().nullable().optional()
+});
+
+export type UpdateCouponRequest = z.infer<typeof updateCouponRequestSchema>;
+
+export const couponsResponseSchema = z.object({
+  coupons: z.array(couponDetailSchema),
+  total: z.number().int(),
+  page: z.number().int(),
+  pageSize: z.number().int()
+});
+
+export type CouponsResponse = z.infer<typeof couponsResponseSchema>;
+
+export const validateCouponRequestSchema = z.object({
+  code: z.string().min(1),
+  productId: z.string().uuid(),
+  quantity: z.number().int().min(1).optional()
+});
+
+export type ValidateCouponRequest = z.infer<typeof validateCouponRequestSchema>;
+
+export const validateCouponResponseSchema = z.object({
+  valid: z.boolean(),
+  coupon: couponDetailSchema.nullable(),
+  discountAmount: z.string().nullable(),
+  error: z.string().nullable()
+});
+
+export type ValidateCouponResponse = z.infer<typeof validateCouponResponseSchema>;
+
+// ---------- Customer Notifications ----------
+
+export const customerNotificationSchema = z.object({
+  id: z.string().uuid(),
+  type: z.string(),
+  title: z.string(),
+  message: z.string(),
+  orderId: z.string().uuid().nullable(),
+  productId: z.string().uuid().nullable(),
+  isRead: z.boolean(),
+  createdAt: z.string()
+});
+
+export type CustomerNotification = z.infer<typeof customerNotificationSchema>;
+
+export const customerNotificationsResponseSchema = z.object({
+  notifications: z.array(customerNotificationSchema),
+  total: z.number().int(),
+  unreadCount: z.number().int(),
+  page: z.number().int(),
+  pageSize: z.number().int()
+});
+
+export type CustomerNotificationsResponse = z.infer<typeof customerNotificationsResponseSchema>;
+
+export const unreadCountResponseSchema = z.object({
+  unreadCount: z.number().int()
+});
+
+export type UnreadCountResponse = z.infer<typeof unreadCountResponseSchema>;

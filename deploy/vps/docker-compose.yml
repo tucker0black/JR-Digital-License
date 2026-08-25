@@ -1,0 +1,171 @@
+name: jr-digital-license-vps
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-jr_digital_license}
+      POSTGRES_USER: ${POSTGRES_USER:-jr}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
+      - --requirepass
+      - ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$${REDIS_PASSWORD}\" ping | grep -q PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
+
+  api:
+    build:
+      context: ../..
+      dockerfile: deploy/vps/Dockerfile
+      target: api
+      args:
+        API_URL: http://api:4000
+        NEXT_PUBLIC_SUPPORT_TELEGRAM_URL: ${NEXT_PUBLIC_SUPPORT_TELEGRAM_URL:-}
+        NEXT_PUBLIC_DEV_AUTH_ENABLED: "false"
+    restart: unless-stopped
+    working_dir: /app/apps/api
+    command: ["node", "dist/index.js"]
+    environment:
+      NODE_ENV: production
+      PORT: ${PORT:-4000}
+      HOST: ${HOST:-0.0.0.0}
+      APP_URL: ${APP_URL:?APP_URL must be set}
+      MINIAPP_URL: ${MINIAPP_URL:?MINIAPP_URL must be set}
+      CORS_ORIGINS: ${CORS_ORIGINS:?CORS_ORIGINS must be set}
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must be set}
+      REDIS_URL: ${REDIS_URL:?REDIS_URL must be set}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?TELEGRAM_BOT_TOKEN must be set}
+      TELEGRAM_ADMIN_GROUP_ID: ${TELEGRAM_ADMIN_GROUP_ID:-}
+      BOT_SECRET: ${BOT_SECRET:?BOT_SECRET must be set}
+      SESSION_SECRET: ${SESSION_SECRET:-}
+      INVENTORY_ENCRYPTION_KEY: ${INVENTORY_ENCRYPTION_KEY:?INVENTORY_ENCRYPTION_KEY must be set}
+      DEV_AUTH_ENABLED: "false"
+      WORKER_INTERVAL_MS: ${WORKER_INTERVAL_MS:-60000}
+      PAYMENT_EXPIRATION_MINUTES: ${PAYMENT_EXPIRATION_MINUTES:-15}
+      MEDIA_STORAGE_DIR: ${MEDIA_STORAGE_DIR:-/app/apps/api/uploads/media}
+      BAKONG_API_URL: ${BAKONG_API_URL:-https://api-bakong.nbc.gov.kh}
+      BAKONG_API_TOKEN: ${BAKONG_API_TOKEN:-}
+      BAKONG_ACCOUNT_ID: ${BAKONG_ACCOUNT_ID:-}
+      BAKONG_MERCHANT_NAME: ${BAKONG_MERCHANT_NAME:-Rotha Jim}
+      BAKONG_MERCHANT_CITY: ${BAKONG_MERCHANT_CITY:-Phnom Penh}
+      BAKONG_STORE_LABEL: ${BAKONG_STORE_LABEL:-JR Digital License}
+      BAKONG_TERMINAL_LABEL: ${BAKONG_TERMINAL_LABEL:-JR-DIGITAL-LICENSE}
+      SMM_API_URL: ${SMM_API_URL:-}
+      SMM_API_KEY: ${SMM_API_KEY:-}
+      TOPUP_VERIFICATION_TTL_MINUTES: ${TOPUP_VERIFICATION_TTL_MINUTES:-10}
+      SUPPORT_OPEN_TIME: ${SUPPORT_OPEN_TIME:-09:00}
+      SUPPORT_CLOSE_TIME: ${SUPPORT_CLOSE_TIME:-17:00}
+      SUPPORT_TIMEZONE_OFFSET_MINUTES: ${SUPPORT_TIMEZONE_OFFSET_MINUTES:-0}
+    volumes:
+      - media_data:/app/apps/api/uploads/media
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4000/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+
+  bot:
+    build:
+      context: ../..
+      dockerfile: deploy/vps/Dockerfile
+      target: bot
+      args:
+        API_URL: http://api:4000
+        NEXT_PUBLIC_SUPPORT_TELEGRAM_URL: ${NEXT_PUBLIC_SUPPORT_TELEGRAM_URL:-}
+        NEXT_PUBLIC_DEV_AUTH_ENABLED: "false"
+    restart: unless-stopped
+    working_dir: /app/apps/bot
+    command: ["node", "dist/index.js"]
+    environment:
+      NODE_ENV: production
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?TELEGRAM_BOT_TOKEN must be set}
+      TELEGRAM_BOT_USERNAME: ${TELEGRAM_BOT_USERNAME:-jrdigitallicense_bot}
+      MINIAPP_URL: ${MINIAPP_URL:?MINIAPP_URL must be set}
+      NEXT_PUBLIC_API_URL: http://api:4000
+      BOT_SECRET: ${BOT_SECRET:?BOT_SECRET must be set}
+    depends_on:
+      api:
+        condition: service_healthy
+
+  miniapp:
+    build:
+      context: ../..
+      dockerfile: deploy/vps/Dockerfile
+      target: miniapp
+      args:
+        API_URL: http://api:4000
+        NEXT_PUBLIC_SUPPORT_TELEGRAM_URL: ${NEXT_PUBLIC_SUPPORT_TELEGRAM_URL:-}
+        NEXT_PUBLIC_DEV_AUTH_ENABLED: "false"
+    restart: unless-stopped
+    working_dir: /app/apps/miniapp
+    command: ["pnpm", "start"]
+    environment:
+      NODE_ENV: production
+      API_URL: http://api:4000
+      APP_URL: ${APP_URL:?APP_URL must be set}
+      MINIAPP_URL: ${MINIAPP_URL:?MINIAPP_URL must be set}
+      PORT: 3001
+      NEXT_PUBLIC_DEV_AUTH_ENABLED: "false"
+      NEXT_PUBLIC_SUPPORT_TELEGRAM_URL: ${NEXT_PUBLIC_SUPPORT_TELEGRAM_URL:-}
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command:
+      - tunnel
+      - --no-autoupdate
+      - run
+      - --token
+      - ${CLOUDFLARE_TUNNEL_TOKEN:?CLOUDFLARE_TUNNEL_TOKEN must be set}
+    depends_on:
+      miniapp:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+    name: jr_digital_license_postgres
+  redis_data:
+    name: jr_digital_license_redis
+  media_data:
+    name: jr_digital_license_media

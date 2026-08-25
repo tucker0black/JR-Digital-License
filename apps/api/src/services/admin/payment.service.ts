@@ -1,4 +1,5 @@
 import type { Prisma, PrismaClient, PaymentProvider, PaymentStatus } from '@prisma/client';
+import { customerIdFromTelegramId } from '@jr/shared';
 
 export interface AdminPaymentFilters {
   provider?: PaymentProvider;
@@ -141,6 +142,7 @@ function serializePayment(payment: {
       ? {
           id: payment.user.id,
           telegramId: payment.user.telegramId.toString(),
+          customerId: customerIdFromTelegramId(payment.user.telegramId),
           username: payment.user.username,
           firstName: payment.user.firstName,
           lastName: payment.user.lastName

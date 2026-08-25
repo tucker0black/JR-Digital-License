@@ -51,6 +51,26 @@ vi.mock('./infrastructure/prisma.js', () => ({
     paymentEvent: {
       create: vi.fn()
     },
+    coupon: {
+      findUnique: vi.fn(),
+      findFirst: vi.fn(),
+      findMany: vi.fn(),
+      count: vi.fn(),
+      create: vi.fn(),
+      update: vi.fn(),
+      delete: vi.fn()
+    },
+    couponUsage: {
+      count: vi.fn(),
+      create: vi.fn()
+    },
+    telegramNotificationTarget: {
+      findMany: vi.fn().mockResolvedValue([])
+    },
+    securityEvent: {
+      count: vi.fn().mockResolvedValue(0),
+      create: vi.fn().mockResolvedValue({ id: 'security-event-1' })
+    },
     admin: {
       findFirst: vi.fn(),
       findUnique: vi.fn()
@@ -66,6 +86,15 @@ vi.mock('./infrastructure/prisma.js', () => ({
       count: vi.fn(),
       groupBy: vi.fn(),
       create: vi.fn()
+    },
+    manualDelivery: {
+      findMany: vi.fn().mockResolvedValue([]),
+      findUnique: vi.fn(),
+      create: vi.fn()
+    },
+    fulfillmentRecord: {
+      findUnique: vi.fn(),
+      upsert: vi.fn()
     },
     $transaction: vi.fn()
   }
@@ -536,6 +565,66 @@ describe('Security: admin endpoints require authorization', () => {
     expect(response.statusCode).toBe(401);
   });
 
+  it('rejects admin coupon list without authorization', async () => {
+    const response = await app.inject({ method: 'GET', url: '/api/admin/coupons' });
+    expect(response.statusCode).toBe(401);
+  });
+
+  it('rejects admin coupon creation without authorization', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/admin/coupons',
+      payload: { code: 'TEST10', discountType: 'PERCENTAGE', discountValue: 10 }
+    });
+    expect(response.statusCode).toBe(401);
+  });
+
+  it('allows an admin with product permissions to list coupons', async () => {
+    prisma.admin.findUnique.mockResolvedValue(
+      makeActiveAdminRow({
+        roles: [
+          {
+            role: {
+              key: 'ADMIN',
+              permissions: [{ permission: { key: 'products:read' } }]
+            }
+          }
+        ]
+      })
+    );
+    prisma.coupon.findMany.mockResolvedValue([]);
+    prisma.coupon.count.mockResolvedValue(0);
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/admin/coupons',
+      headers: makeAdminHeaders()
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body).not.toContain(ADMIN_TEST_TOKEN);
+  });
+
+  it('rejects an admin without the required coupon permission', async () => {
+    prisma.admin.findUnique.mockResolvedValue({
+      id: 'admin-1',
+      telegramId: BigInt(1),
+      username: 'limited',
+      firstName: 'Limited',
+      lastName: null,
+      status: 'ACTIVE',
+      roles: [{ role: { key: 'SUPPORT', permissions: [] } }]
+    });
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/admin/coupons',
+      headers: makeAdminHeaders()
+    });
+
+    expect(response.statusCode).toBe(403);
+  });
+
   it('never echoes the admin token in authorized responses', async () => {
     prisma.admin.findUnique.mockResolvedValue(
       makeActiveAdminRow({
@@ -675,7 +764,7 @@ describe('Security: payment integrity', () => {
       slug: 'gemini-18-month',
       isActive: true,
       status: 'ACTIVE',
-      price: { toString: () => '2.60', mul: (q: number) => ({ toString: () => (2.6 * q).toFixed(2) }) },
+      price: { toString: () => '2.60', mul: (q: number) => ({ toString: () => (2.6 * q).toFixed(2), sub: (d: number) => ({ toString: () => (2.6 * q - d).toFixed(2) }) }), sub: (d: number) => ({ toString: () => (2.6 - d).toFixed(2) }) },
       currency: 'USD',
       minimumQuantity: 1,
       maximumQuantity: 5,

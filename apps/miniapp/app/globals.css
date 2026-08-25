@@ -2,78 +2,88 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ================================================================
+   JR DIGITAL - COSMIC LUXURY DESIGN SYSTEM
+   ================================================================ */
+
+/* --- Light Mode (default) --- */
 :root {
   color-scheme: light;
-
-  --background: 248 250 252;
-  --foreground: 15 23 42;
+  --page: 247 248 255;
+  --surface: 255 255 255;
   --card: 255 255 255;
-  --card-border: 226 232 240;
-  --muted: 241 245 249;
-  --input: 241 245 249;
-  --button: 14 165 233;
-  --button-text: 255 255 255;
-  --nav: 248 250 252;
-  --danger: 239 68 68;
-  --success: 16 185 129;
-
-  --page: 248 250 252;
-  --card: 255 255 255;
-  --muted: 241 245 249;
-  --primary: 14 165 233;
-  --primary-dark: 2 132 199;
-  --primary-soft: 224 242 254;
-  --ink: 15 23 42;
-  --soft: 100 116 139;
-  --line: 226 232 240;
-  --success: 16 185 129;
-  --warning: 245 158 11;
-  --danger: 239 68 68;
-  --accent: 6 182 212;
-  --accent-soft: 207 250 254;
+  --card-elevated: 241 243 255;
+  --muted: 235 237 245;
+  --primary: 37 99 235;
+  --primary-dark: 29 78 216;
+  --primary-light: 96 165 250;
+  --primary-soft: 235 241 255;
+  --accent: 139 92 246;
+  --accent-soft: 245 243 255;
   --violet: 139 92 246;
-  --violet-soft: 237 233 254;
-
-  --skeleton-shine: rgba(255, 255, 255, 0.75);
+  --violet-soft: 245 243 255;
+  --ink: 15 23 42;
+  --soft: 71 85 105;
+  --muted-text: 100 116 139;
+  --line: 226 232 240;
+  --success: 16 163 90;
+  --success-soft: 220 252 231;
+  --warning: 212 155 20;
+  --warning-soft: 254 243 199;
+  --danger: 220 50 50;
+  --danger-soft: 254 226 226;
+  --gradient-primary: linear-gradient(135deg, rgb(59 130 246), rgb(99 102 241), rgb(139 92 246));
+  --gradient-accent: linear-gradient(135deg, rgb(99 102 241), rgb(168 85 247), rgb(236 72 153));
+  --gradient-wallet: linear-gradient(135deg, rgb(59 130 246), rgb(99 102 241));
+  --gradient-hero: linear-gradient(135deg, rgb(59 130 246) 0%, rgb(99 102 241) 45%, rgb(139 92 246) 100%);
+  --gradient-surface: linear-gradient(180deg, rgb(247 248 255) 0%, rgb(241 243 255) 100%);
+  --skeleton-shine: rgba(0, 0, 0, 0.04);
+  --skeleton-base: 230 232 240;
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.06), 0 2px 4px rgba(0, 0, 0, 0.04);
+  --shadow-lg: 0 12px 40px rgba(0, 0, 0, 0.08), 0 4px 12px rgba(0, 0, 0, 0.04);
+  --shadow-glow: 0 0 24px rgba(59, 130, 246, 0.12);
+  --shadow-glow-accent: 0 0 20px rgba(139, 92, 246, 0.1);
 }
 
-.dark {
+/* --- Dark Mode (Cosmic Luxury) --- */
+html.dark {
   color-scheme: dark;
-
-  --background: 11 16 32;
-  --foreground: 241 245 249;
-  --card: 19 27 49;
-  --card-border: 30 41 59;
-  --muted: 30 41 59;
-  --input: 30 41 59;
-  --button: 56 189 248;
-  --button-text: 255 255 255;
-  --nav: 11 16 32;
-  --danger: 248 113 113;
-  --success: 52 211 153;
-
-  --page: 11 16 32;
-  --card: 19 27 49;
-  --muted: 30 41 59;
-  --primary: 56 189 248;
-  --primary-dark: 14 165 233;
-  --primary-soft: 8 47 73;
-  --ink: 241 245 249;
-  --soft: 148 163 184;
-  --line: 30 41 59;
-  --success: 52 211 153;
-  --warning: 251 191 36;
-  --danger: 248 113 113;
-  --accent: 34 211 238;
-  --accent-soft: 8 51 68;
+  --page: 5 6 13;
+  --surface: 8 10 20;
+  --card: 10 14 28;
+  --card-elevated: 14 19 36;
+  --muted: 22 28 48;
+  --primary: 59 130 246;
+  --primary-dark: 37 99 235;
+  --primary-light: 96 165 250;
+  --primary-soft: 20 30 60;
+  --accent: 139 92 246;
+  --accent-soft: 30 25 70;
   --violet: 167 139 250;
-  --violet-soft: 49 46 129;
-
-  --skeleton-shine: rgba(255, 255, 255, 0.08);
-}
-
-* {
-  box-sizing: border-box;
+  --violet-soft: 40 34 100;
+  --ink: 248 250 252;
+  --soft: 148 163 184;
+  --muted-text: 100 116 139;
+  --line: 35 45 70;
+  --success: 34 197 94;
+  --success-soft: 6 78 59;
+  --warning: 251 191 36;
+  --warning-soft: 113 63 18;
+  --danger: 248 113 113;
+  --danger-soft: 127 29 29;
+  --gradient-primary: linear-gradient(135deg, rgb(59 130 246), rgb(99 102 241), rgb(139 92 246));
+  --gradient-accent: linear-gradient(135deg, rgb(99 102 241), rgb(168 85 247), rgb(236 72 153));
+  --gradient-wallet: linear-gradient(135deg, rgb(59 130 246), rgb(99 102 241));
+  --gradient-hero: linear-gradient(135deg, rgb(59 130 246) 0%, rgb(99 102 241) 45%, rgb(139 92 246) 100%);
+  --gradient-surface: linear-gradient(180deg, rgb(8 10 20) 0%, rgb(5 6 13) 100%);
+  --skeleton-shine: rgba(255, 255, 255, 0.04);
+  --skeleton-base: 14 19 36;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.35), 0 2px 6px rgba(0, 0, 0, 0.25);
+  --shadow-lg: 0 12px 40px rgba(0, 0, 0, 0.45), 0 4px 12px rgba(0, 0, 0, 0.3);
+  --shadow-glow: 0 0 30px rgba(59, 130, 246, 0.18);
+  --shadow-glow-accent: 0 0 24px rgba(139, 92, 246, 0.15);
 }
 
 html,
@@ -83,54 +93,211 @@ body {
   background: rgb(var(--page));
 }
 
+html:not(.no-theme-transition) body,
+html:not(.no-theme-transition) .glass,
+html:not(.no-theme-transition) .glass-strong,
+html:not(.no-theme-transition) .glass-subtle,
+html:not(.no-theme-transition) .card-cosmic {
+  transition-property: background-color, color, border-color, box-shadow;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  transition-duration: 200ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html body, html .glass, html .glass-strong, html .glass-subtle, html .card-cosmic {
+    transition: none !important;
+  }
+}
+
 body {
   color: rgb(var(--ink));
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans Khmer', 'Noto Sans', sans-serif;
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
+  letter-spacing: -0.01em;
+}
+
+html[lang="km"] body {
+  font-family: 'Noto Sans Khmer', 'Noto Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  line-height: 1.6;
+}
+
+@layer utilities {
+  .transition-default {
+    transition-property: color, background-color, border-color, box-shadow, transform, opacity;
+    transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+    transition-duration: 150ms;
+  }
+  .transition-luxury {
+    transition-property: color, background-color, border-color, box-shadow, transform, opacity;
+    transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+    transition-duration: 200ms;
+  }
+  .glass {
+    background: var(--glass-bg, rgba(10, 14, 28, 0.78));
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+  }
+  .glass-strong {
+    background: rgba(10, 14, 28, 0.88);
+    backdrop-filter: blur(24px) saturate(200%);
+    -webkit-backdrop-filter: blur(24px) saturate(200%);
+  }
+  .glass-subtle {
+    background: rgba(10, 14, 28, 0.5);
+    backdrop-filter: blur(12px) saturate(160%);
+    -webkit-backdrop-filter: blur(12px) saturate(160%);
+  }
+  .gradient-text {
+    background: var(--gradient-primary);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  .card-cosmic {
+    background: rgb(var(--card));
+    border: 1px solid rgb(var(--line) / 0.5);
+    box-shadow: var(--shadow-sm);
+    transition: border-color 200ms ease, box-shadow 200ms ease, transform 200ms ease;
+  }
+  .card-cosmic:hover {
+    border-color: rgba(59, 130, 246, 0.25);
+    box-shadow: var(--shadow-md), 0 0 20px rgba(59, 130, 246, 0.06);
+  }
+  .card-elevated {
+    background: rgb(var(--card-elevated));
+    border: 1px solid rgb(var(--line) / 0.4);
+    box-shadow: var(--shadow-md);
+  }
+  .card-surface {
+    background: rgb(var(--surface));
+    border: 1px solid rgb(var(--line) / 0.3);
+  }
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.02em;
+  }
+  .blue-glow {
+    box-shadow: 0 0 20px rgba(59, 130, 246, 0.15), 0 0 40px rgba(59, 130, 246, 0.05);
+  }
+  .purple-glow {
+    box-shadow: 0 0 20px rgba(139, 92, 246, 0.15), 0 0 40px rgba(139, 92, 246, 0.05);
+  }
+  .cosmic-border {
+    border: 1px solid rgba(99, 102, 241, 0.15);
+  }
 }
 
 @keyframes fade-up {
-  from {
-    opacity: 0;
-    transform: translateY(8px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
 }
-
-.animate-fade-up {
-  animation: fade-up 0.4s ease-out both;
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
-
+@keyframes scale-in {
+  from { opacity: 0; transform: scale(0.97); }
+  to { opacity: 1; transform: scale(1); }
+}
+@keyframes slide-up {
+  from { transform: translateY(100%); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+@keyframes pulse-glow {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 0.7; }
+}
 @keyframes shimmer {
-  100% {
-    transform: translateX(100%);
-  }
+  100% { transform: translateX(100%); }
 }
+
+.animate-fade-up { animation: fade-up 0.3s cubic-bezier(0.16, 1, 0.3, 1) both; }
+.animate-fade-in { animation: fade-in 0.25s ease-out both; }
+.animate-scale-in { animation: scale-in 0.2s cubic-bezier(0.16, 1, 0.3, 1) both; }
+.animate-slide-up { animation: slide-up 0.35s cubic-bezier(0.16, 1, 0.3, 1) both; }
+
+.stagger-children > * { animation: fade-up 0.3s cubic-bezier(0.16, 1, 0.3, 1) both; }
+.stagger-children > *:nth-child(1) { animation-delay: 0ms; }
+.stagger-children > *:nth-child(2) { animation-delay: 30ms; }
+.stagger-children > *:nth-child(3) { animation-delay: 60ms; }
+.stagger-children > *:nth-child(4) { animation-delay: 90ms; }
+.stagger-children > *:nth-child(5) { animation-delay: 120ms; }
+.stagger-children > *:nth-child(6) { animation-delay: 150ms; }
+.stagger-children > *:nth-child(7) { animation-delay: 180ms; }
+.stagger-children > *:nth-child(8) { animation-delay: 210ms; }
+.stagger-children > *:nth-child(9) { animation-delay: 240ms; }
+.stagger-children > *:nth-child(10) { animation-delay: 270ms; }
+.stagger-children > *:nth-child(11) { animation-delay: 300ms; }
+.stagger-children > *:nth-child(12) { animation-delay: 330ms; }
 
 .skeleton {
   position: relative;
   overflow: hidden;
-  background: rgb(var(--muted));
+  background: rgb(var(--skeleton-base));
+  border-radius: 12px;
 }
-
 .skeleton::after {
   content: '';
   position: absolute;
   inset: 0;
   transform: translateX(-100%);
   background: linear-gradient(90deg, transparent, var(--skeleton-shine), transparent);
-  animation: shimmer 1.6s infinite;
+  animation: shimmer 2s infinite;
 }
 
-.no-scrollbar::-webkit-scrollbar {
-  display: none;
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+:focus-visible {
+  outline: 2px solid rgb(var(--primary));
+  outline-offset: 2px;
+  border-radius: 8px;
 }
 
-.no-scrollbar {
-  -ms-overflow-style: none;
-  scrollbar-width: none;
+::selection {
+  background: rgba(59, 130, 246, 0.2);
+  color: rgb(var(--ink));
+}
+
+/* Subtle cosmic backdrop: faint blue glow top-center, violet glow bottom-right.
+   Uses background-image only, so it can never paint over content. */
+.bg-cosmic {
+  background-image:
+    radial-gradient(ellipse 60% 32% at 50% -8%, rgba(59, 130, 246, 0.09), transparent),
+    radial-gradient(ellipse 48% 28% at 88% 106%, rgba(139, 92, 246, 0.06), transparent);
+  background-repeat: no-repeat;
+}
+
+.bg-ambient { position: relative; }
+.bg-ambient::before {
+  content: '';
+  position: fixed;
+  top: -20%;
+  left: -10%;
+  width: 50%;
+  height: 50%;
+  background: radial-gradient(ellipse, rgba(59, 130, 246, 0.12) 0%, transparent 35%);
+  pointer-events: none;
+  z-index: 0;
+}
+.bg-ambient::after {
+  content: '';
+  position: fixed;
+  bottom: -20%;
+  right: -10%;
+  width: 50%;
+  height: 50%;
+  background: radial-gradient(ellipse, rgba(139, 92, 246, 0.08) 0%, transparent 38%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

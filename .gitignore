@@ -11,3 +11,5 @@ test-results/
 *.log
 secrets/
 apps/api/src/generated/
+# Permanent uploaded media (game logos, banner artwork) — server-owned files.
+uploads/

@@ -1,4 +1,5 @@
 import type { PrismaClient, SupportTicketStatus } from '@prisma/client';
+import { customerIdFromTelegramId } from '@jr/shared';
 
 export interface TicketFilters {
   search?: string;
@@ -20,6 +21,7 @@ function serializeUser(user: TicketUser) {
   return {
     id: user.id,
     telegramId: user.telegramId.toString(),
+    customerId: customerIdFromTelegramId(user.telegramId),
     username: user.username,
     displayName: [user.firstName, user.lastName].filter(Boolean).join(' ').trim() || user.username || null,
     usernameHandle: user.username ? `@${user.username}` : null,

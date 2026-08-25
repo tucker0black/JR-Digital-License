@@ -43,19 +43,28 @@ vi.mock('./infrastructure/prisma.js', () => ({
       findUnique: vi.fn(),
       findMany: vi.fn(),
       count: vi.fn(),
-      update: vi.fn()
+      update: vi.fn(),
+      findFirst: vi.fn().mockResolvedValue(null)
     },
     supportMessage: {
       create: vi.fn(),
       count: vi.fn(),
       updateMany: vi.fn()
     },
+    telegramNotificationTarget: {
+      findMany: vi.fn().mockResolvedValue([])
+    },
+    securityEvent: {
+      count: vi.fn().mockResolvedValue(0),
+      create: vi.fn().mockResolvedValue({ id: 'security-event-1' })
+    },
     order: {
       create: vi.fn(),
       findMany: vi.fn(),
       findUnique: vi.fn(),
       count: vi.fn(),
-      update: vi.fn()
+      update: vi.fn(),
+      updateMany: vi.fn()
     },
     orderItem: {
       findUnique: vi.fn(),
@@ -75,6 +84,27 @@ vi.mock('./infrastructure/prisma.js', () => ({
     admin: {
       findFirst: vi.fn(),
       findUnique: vi.fn()
+    },
+    coupon: {
+      findUnique: vi.fn(),
+      findFirst: vi.fn(),
+      findMany: vi.fn(),
+      count: vi.fn(),
+      create: vi.fn(),
+      update: vi.fn(),
+      delete: vi.fn()
+    },
+    couponUsage: {
+      count: vi.fn().mockResolvedValue(0),
+      create: vi.fn()
+    },
+    manualDelivery: {
+      findMany: vi.fn().mockResolvedValue([]),
+      findUnique: vi.fn(),
+      create: vi.fn()
+    },
+    banner: {
+      findMany: vi.fn()
     },
     $transaction: vi.fn()
   }
@@ -107,6 +137,10 @@ const { prisma } = await import('./infrastructure/prisma.js');
 
 beforeAll(() => {
   process.env.TELEGRAM_BOT_TOKEN = 'test-bot-token:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+  // Keep support working hours deterministic (always open) during tests.
+  process.env.SUPPORT_OPEN_TIME = '00:00';
+  process.env.SUPPORT_CLOSE_TIME = '23:59';
+  process.env.SUPPORT_TIMEZONE_OFFSET_MINUTES = '0';
 });
 
 const mockTelegramUser = {
@@ -569,7 +603,12 @@ describe('POST /api/orders', () => {
       deliveryType: 'DIGITAL_LINK',
       stock: [{ id: 'stock-1', status: 'AVAILABLE' }]
     });
-    prisma.order.findUnique.mockResolvedValue({ id: 'existing-order', idempotencyKey: 'idem-1' });
+    prisma.order.findUnique.mockResolvedValue({
+      id: 'existing-order',
+      idempotencyKey: 'idem-1',
+      userId: 'someone-else',
+      items: [{ productId: 'product-1', quantitySnapshot: 1, target: null }]
+    });
 
     const response = await app.inject({
       method: 'POST',
@@ -605,9 +644,17 @@ describe('POST /api/orders (server-side totals)', () => {
   beforeEach(() => {
     app = buildApp();
     txOrderCreate = vi.fn().mockImplementation((args: { data: Record<string, unknown> }) => ({
+      ...args.data,
       id: 'order-created',
-      items: [],
-      ...args.data
+      orderNumber: 59,
+      status: 'DRAFT',
+      expiresAt: null,
+      paidAt: null,
+      completedAt: null,
+      cancelledAt: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      items: []
     }));
     prisma.$transaction.mockImplementation(async (callback: (tx: unknown) => unknown) =>
       callback({ order: { create: txOrderCreate } })
@@ -738,6 +785,242 @@ describe('POST /api/orders (server-side totals)', () => {
   });
 });
 
+describe('POST /api/coupons/validate (numerical discount)', () => {
+  let app: ReturnType<typeof buildApp>;
+
+  const makeProduct = (price: string) => ({
+    id: 'product-1',
+    name: 'Game Account',
+    categoryId: 'category-1',
+    isActive: true,
+    status: 'ACTIVE',
+    type: 'DIGITAL_TEXT',
+    price: new Prisma.Decimal(price),
+    currency: 'USD',
+    minimumQuantity: 1,
+    maximumQuantity: null,
+    hideWhenOutOfStock: false,
+    deliveryType: 'DIGITAL_TEXT',
+    stock: Array.from({ length: 5 }, (_, i) => ({ id: `stock-${i}`, status: 'AVAILABLE' })),
+    variants: []
+  });
+
+  const makeCoupon = (overrides: Record<string, unknown> = {}) => ({
+    id: 'coupon-1',
+    code: 'BESTJR',
+    discountType: 'PERCENTAGE',
+    discountValue: new Prisma.Decimal('5'),
+    minimumOrderAmount: null,
+    maximumDiscountAmount: null,
+    startAt: null,
+    endAt: null,
+    usageLimit: null,
+    perUserLimit: 1,
+    isActive: true,
+    restrictedProductId: null,
+    restrictedCategoryId: null,
+    usageCount: 0,
+    restrictedProduct: null,
+    restrictedCategory: null,
+    ...overrides
+  });
+
+  beforeEach(() => {
+    app = buildApp();
+  });
+
+  afterEach(async () => {
+    vi.clearAllMocks();
+    await app.close();
+  });
+
+  it.each([
+    // [price, quantity, couponValue, expectedDiscount]
+    ['10.00', 1, '5', '0.50'],
+    ['2.60', 2, '5', '0.26'],
+    ['10.00', 3, '5', '1.50'],
+    ['7.77', 4, '15', '4.66']
+  ])('%s × %i with %s%% coupon discounts exactly %s', async (price, quantity, value, expected) => {
+    prisma.user.findUnique.mockResolvedValue(mockDbUser);
+    prisma.coupon.findUnique.mockResolvedValue(makeCoupon({ discountValue: new Prisma.Decimal(value) }));
+    prisma.product.findUnique.mockResolvedValue(makeProduct(price));
+    prisma.couponUsage.count.mockResolvedValue(0);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/coupons/validate',
+      headers: authHeaders,
+      body: { code: 'BESTJR', productId: 'product-1', quantity }
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+    expect(body.valid).toBe(true);
+    expect(body.discountAmount).toBe(expected);
+  });
+
+  it('applies a fixed-amount coupon without percentage conversion', async () => {
+    prisma.user.findUnique.mockResolvedValue(mockDbUser);
+    prisma.coupon.findUnique.mockResolvedValue(
+      makeCoupon({ discountType: 'FIXED', discountValue: new Prisma.Decimal('1.25') })
+    );
+    prisma.product.findUnique.mockResolvedValue(makeProduct('10.00'));
+    prisma.couponUsage.count.mockResolvedValue(0);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/coupons/validate',
+      headers: authHeaders,
+      body: { code: 'BESTJR', productId: 'product-1', quantity: 2 }
+    });
+
+    expect(response.json().discountAmount).toBe('1.25');
+  });
+
+  it('caps the discount at maximumDiscountAmount', async () => {
+    prisma.user.findUnique.mockResolvedValue(mockDbUser);
+    prisma.coupon.findUnique.mockResolvedValue(
+      makeCoupon({ discountValue: new Prisma.Decimal('50'), maximumDiscountAmount: new Prisma.Decimal('2.00') })
+    );
+    prisma.product.findUnique.mockResolvedValue(makeProduct('10.00'));
+    prisma.couponUsage.count.mockResolvedValue(0);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/coupons/validate',
+      headers: authHeaders,
+      body: { code: 'BESTJR', productId: 'product-1', quantity: 1 }
+    });
+
+    expect(response.json().discountAmount).toBe('2.00');
+  });
+
+  it('rejects a subtotal below minimumOrderAmount', async () => {
+    prisma.user.findUnique.mockResolvedValue(mockDbUser);
+    prisma.coupon.findUnique.mockResolvedValue(makeCoupon({ minimumOrderAmount: new Prisma.Decimal('20.00') }));
+    prisma.product.findUnique.mockResolvedValue(makeProduct('10.00'));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/coupons/validate',
+      headers: authHeaders,
+      body: { code: 'BESTJR', productId: 'product-1', quantity: 1 }
+    });
+
+    const body = response.json();
+    expect(body.valid).toBe(false);
+    expect(body.discountAmount).toBeNull();
+  });
+
+  it('rejects expired and disabled coupons', async () => {
+    prisma.user.findUnique.mockResolvedValue(mockDbUser);
+    prisma.product.findUnique.mockResolvedValue(makeProduct('10.00'));
+
+    prisma.coupon.findUnique.mockResolvedValue(makeCoupon({ isActive: false }));
+    const disabled = await app.inject({
+      method: 'POST',
+      url: '/api/coupons/validate',
+      headers: authHeaders,
+      body: { code: 'BESTJR', productId: 'product-1' }
+    });
+    expect(disabled.json().valid).toBe(false);
+
+    prisma.coupon.findUnique.mockResolvedValue(makeCoupon({ endAt: new Date(Date.now() - 86_400_000) }));
+    const expired = await app.inject({
+      method: 'POST',
+      url: '/api/coupons/validate',
+      headers: authHeaders,
+      body: { code: 'BESTJR', productId: 'product-1' }
+    });
+    expect(expired.json().error).toContain('expired');
+  });
+
+  it('enforces the per-user usage limit', async () => {
+    prisma.user.findUnique.mockResolvedValue(mockDbUser);
+    prisma.coupon.findUnique.mockResolvedValue(makeCoupon());
+    prisma.couponUsage.count.mockResolvedValue(1);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/coupons/validate',
+      headers: authHeaders,
+      body: { code: 'BESTJR', productId: 'product-1' }
+    });
+
+    expect(response.json().valid).toBe(false);
+  });
+
+  it('rejects coupons restricted to a different product or category', async () => {
+    prisma.user.findUnique.mockResolvedValue(mockDbUser);
+    prisma.product.findUnique.mockResolvedValue(makeProduct('10.00'));
+    prisma.couponUsage.count.mockResolvedValue(0);
+
+    prisma.coupon.findUnique.mockResolvedValue(makeCoupon({ restrictedProductId: 'other-product' }));
+    const wrongProduct = await app.inject({
+      method: 'POST',
+      url: '/api/coupons/validate',
+      headers: authHeaders,
+      body: { code: 'BESTJR', productId: 'product-1' }
+    });
+    expect(wrongProduct.json().valid).toBe(false);
+
+    prisma.coupon.findUnique.mockResolvedValue(makeCoupon({ restrictedCategoryId: 'other-category' }));
+    const wrongCategory = await app.inject({
+      method: 'POST',
+      url: '/api/coupons/validate',
+      headers: authHeaders,
+      body: { code: 'BESTJR', productId: 'product-1' }
+    });
+    expect(wrongCategory.json().valid).toBe(false);
+  });
+
+  it('applies the coupon server-side to the order total at creation time', async () => {
+    prisma.user.findUnique.mockResolvedValue(mockDbUser);
+    prisma.product.findUnique.mockResolvedValue(makeProduct('10.00'));
+    prisma.coupon.findUnique.mockResolvedValue(makeCoupon());
+    prisma.couponUsage.count.mockResolvedValue(0);
+
+    let createdData: Record<string, unknown> | undefined;
+    prisma.$transaction.mockImplementation(async (callback: (tx: unknown) => unknown) =>
+      callback({
+        order: {
+          create: vi.fn().mockImplementation((args: { data: Record<string, unknown> }) => {
+            createdData = args.data;
+            return {
+              ...args.data,
+              id: 'order-coupon',
+              orderNumber: 60,
+              status: 'DRAFT',
+              expiresAt: null,
+              paidAt: null,
+              completedAt: null,
+              cancelledAt: null,
+              createdAt: new Date(),
+              updatedAt: new Date(),
+              items: []
+            };
+          })
+        },
+        coupon: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
+        couponUsage: { count: vi.fn().mockResolvedValue(0), create: vi.fn().mockResolvedValue({}) }
+      })
+    );
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/orders',
+      headers: authHeaders,
+      body: { productId: 'product-1', quantity: 2, couponCode: 'BESTJR' }
+    });
+
+    expect(response.statusCode).toBe(201);
+    // 5% of $20.00 subtotal = $1.00 discount, total $19.00.
+    expect((createdData?.discount as Prisma.Decimal).toFixed(2)).toBe('1.00');
+    expect((createdData?.total as Prisma.Decimal).toFixed(2)).toBe('19.00');
+    expect((createdData?.subtotal as Prisma.Decimal).toFixed(2)).toBe('20.00');
+  });
+});
+
 describe('GET /api/orders/:id (delivery values)', () => {
   let app: ReturnType<typeof buildApp>;
 
@@ -794,6 +1077,7 @@ describe('GET /api/orders/:id (delivery values)', () => {
       { id: 'stock-1', productId: 'product-1', status: 'SOLD' },
       { id: 'stock-2', productId: 'product-1', status: 'SOLD' }
     ]);
+    prisma.manualDelivery.findMany.mockResolvedValue([]);
     stockServiceMock.getStockWithDecryptedValue.mockImplementation((id: string) =>
       Promise.resolve({
         id,
@@ -822,6 +1106,7 @@ describe('GET /api/orders/:id (delivery values)', () => {
     prisma.productStock.findMany.mockResolvedValue([
       { id: 'stock-1', productId: 'product-1', status: 'RESERVED' }
     ]);
+    prisma.manualDelivery.findMany.mockResolvedValue([]);
     stockServiceMock.getStockWithDecryptedValue.mockResolvedValue({
       id: 'stock-1',
       deliveryValue: 'acct1@example.com|pass1',
@@ -1945,5 +2230,386 @@ describe('Customer Isolation', () => {
 
       expect(response.statusCode).toBe(401);
       expect(prisma.category.findUnique).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('Admin order refund route', () => {
+    let app: ReturnType<typeof buildApp>;
+
+    const ADMIN_ROW = {
+      id: 'admin-1',
+      telegramId: BigInt(1),
+      username: 'admin',
+      firstName: 'Admin',
+      lastName: null,
+      status: 'ACTIVE',
+      roles: [
+        {
+          role: {
+            key: 'SUPER_ADMIN',
+            permissions: [
+              { permission: { key: 'orders:update' } },
+              { permission: { key: 'orders:read' } }
+            ]
+          }
+        }
+      ]
+    };
+
+    const adminHeaders = { authorization: `Bearer ${hashAdminToken('admin-token-for-tests')}` };
+
+    const KHQR_ORDER_ROW = {
+      id: 'order-1',
+      orderNumber: 59,
+      userId: 'user-1',
+      status: 'PAID',
+      currency: 'USD',
+      total: new Prisma.Decimal('2.60'),
+      user: {
+        id: 'user-1',
+        firstName: 'John',
+        lastName: 'Doe',
+        username: 'johndoe',
+        telegramId: BigInt(123456789)
+      },
+      payments: [
+        {
+          id: 'payment-1',
+          orderId: 'order-1',
+          userId: 'user-1',
+          provider: 'KHQR',
+          status: 'SUCCEEDED',
+          amount: new Prisma.Decimal('2.60'),
+          currency: 'USD',
+          reference: 'JR-OR-REF1',
+          providerTransactionHash: 'bakong-hash-1',
+          idempotencyKey: 'idem-1'
+        }
+      ]
+    };
+
+    beforeEach(() => {
+      app = buildApp();
+      prisma.admin.findUnique.mockResolvedValue(ADMIN_ROW);
+      prisma.order.findUnique.mockResolvedValue(KHQR_ORDER_ROW);
+      prisma.payment.findFirst.mockResolvedValue(null);
+      prisma.productStock.findMany.mockResolvedValue([]);
+      prisma.order.updateMany.mockResolvedValue({ count: 1 });
+      prisma.$transaction.mockImplementation(async (callback: (tx: unknown) => unknown) =>
+        callback({
+          order: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
+          payment: {
+            update: vi.fn().mockResolvedValue({ id: 'payment-1', status: 'REFUNDED' }),
+            create: vi.fn().mockResolvedValue({ id: 'refund-payment-1' })
+          },
+          productStock: {
+            findMany: vi.fn().mockResolvedValue([]),
+            updateMany: vi.fn()
+          },
+          auditLog: { create: vi.fn().mockResolvedValue({ id: 'log-1' }) }
+        })
+      );
+    });
+
+    afterEach(async () => {
+      prisma.$transaction.mockReset();
+      vi.clearAllMocks();
+      await app.close();
+    });
+
+    it('refunds a paid KHQR order via the admin route and reports the external-refund limitation', async () => {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/admin/orders/order-1/refund',
+        headers: adminHeaders,
+        payload: { reason: 'Duplicate purchase', amount: '2.60' }
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = response.json();
+      expect(body.success).toBe(true);
+      expect(body.refund).toEqual(
+        expect.objectContaining({
+          provider: 'KHQR',
+          amountRefunded: '2.60',
+          currency: 'USD',
+          externalRefundRequired: true
+        })
+      );
+    });
+
+    it('rejects a refund amount that exceeds the amount actually paid (400)', async () => {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/admin/orders/order-1/refund',
+        headers: adminHeaders,
+        payload: { amount: '99.99' }
+      });
+
+      expect(response.statusCode).toBe(400);
+      expect(response.json().error).toContain('cannot exceed');
+    });
+
+    it('rejects refund without admin authorization (401)', async () => {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/admin/orders/order-1/refund',
+        payload: { reason: 'x' }
+      });
+
+      expect(response.statusCode).toBe(401);
+      expect(prisma.order.findUnique).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('Customer payment cancel route (KHQR race)', () => {
+    let app: ReturnType<typeof buildApp>;
+
+    const PAYMENT_ROW = {
+      id: 'payment-1',
+      orderId: 'order-1',
+      userId: 'user-1',
+      provider: 'KHQR',
+      status: 'PENDING',
+      amount: new Prisma.Decimal('2.60'),
+      currency: 'USD',
+      reference: 'JR-OR-REF1',
+      providerPaymentId: 'fakemd5abcdef0123456789abcdef0123',
+      idempotencyKey: 'idem-1',
+      expiresAt: new Date(Date.now() + 5 * 60 * 1000),
+      paidAt: null,
+      metadata: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      order: { id: 'order-1' }
+    };
+
+    beforeEach(() => {
+      app = buildApp();
+      prisma.user.findUnique.mockResolvedValue(mockDbUser);
+    });
+
+    afterEach(async () => {
+      vi.clearAllMocks();
+      await app.close();
+    });
+
+    it('returns paid:true when cancelling an already SUCCEEDED payment', async () => {
+      prisma.payment.findUnique.mockResolvedValue({ ...PAYMENT_ROW, status: 'SUCCEEDED', paidAt: new Date() });
+      prisma.order.findUnique.mockResolvedValue({ status: 'COMPLETED' });
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/payments/payment-1/expire',
+        headers: authHeaders
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toEqual(
+        expect.objectContaining({ success: true, status: 'SUCCEEDED', paid: true, alreadyTerminal: true })
+      );
+    });
+
+    it('is idempotent for an already CANCELLED payment', async () => {
+      prisma.payment.findUnique.mockResolvedValue({ ...PAYMENT_ROW, status: 'CANCELLED' });
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/payments/payment-1/expire',
+        headers: authHeaders
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toEqual(
+        expect.objectContaining({ success: true, status: 'CANCELLED', alreadyTerminal: true })
+      );
+    });
+
+    it('refuses to cancel when the backend cannot confirm the payment is unpaid', async () => {
+      prisma.payment.findUnique.mockResolvedValue(PAYMENT_ROW);
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/payments/payment-1/expire',
+        headers: authHeaders
+      });
+
+      expect(response.statusCode).toBe(400);
+      expect(response.json().error).toContain('could not be confirmed');
+    });
+  });
+
+  describe('GET /api/banners (targeting regression)', () => {
+    let app: ReturnType<typeof buildApp>;
+
+    const TOP_UP_CATEGORY_ID = '41235c89-a91e-4115-a6cf-f4216c6cf1c2';
+    const OTHER_CATEGORY_ID = '99999999-9999-4999-8999-999999999999';
+
+    const homeBanner = {
+      id: 'banner-home',
+      title: '5% OFF STOREWIDE',
+      subtitle: null,
+      imageUrl: null,
+      buttonText: null,
+      buttonDestination: null,
+      targetType: 'HOME',
+      targetCategoryId: null,
+      targetProductId: null,
+      targetPage: null
+    };
+
+    const topUpBanner = {
+      id: 'banner-topup',
+      title: 'MLBB biner',
+      subtitle: null,
+      imageUrl: null,
+      buttonText: null,
+      buttonDestination: null,
+      targetType: 'CATEGORY',
+      targetCategoryId: TOP_UP_CATEGORY_ID,
+      targetProductId: null,
+      targetPage: null
+    };
+
+    beforeEach(() => {
+      app = buildApp();
+    });
+
+    afterEach(async () => {
+      vi.clearAllMocks();
+      await app.close();
+    });
+
+    it('TEST A: HOME target returns only HOME banners', async () => {
+      prisma.user.findUnique.mockResolvedValue(mockDbUser);
+      prisma.banner.findMany.mockResolvedValue([homeBanner]);
+
+      const response = await app.inject({
+        method: 'GET',
+        url: '/api/banners?targetType=HOME',
+        headers: authHeaders
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json().banners).toHaveLength(1);
+      expect(response.json().banners[0]).toMatchObject({ id: 'banner-home', targetType: 'HOME' });
+
+      const where = prisma.banner.findMany.mock.calls[0][0].where;
+      expect(where.targetType).toBe('HOME');
+      expect(where.targetCategoryId).toBeUndefined();
+    });
+
+    it('TEST B: CATEGORY/TopUp target matches the requested category id', async () => {
+      prisma.user.findUnique.mockResolvedValue(mockDbUser);
+      prisma.banner.findMany.mockResolvedValue([topUpBanner]);
+
+      const response = await app.inject({
+        method: 'GET',
+        url: `/api/banners?targetType=CATEGORY&categoryId=${TOP_UP_CATEGORY_ID}`,
+        headers: authHeaders
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json().banners).toHaveLength(1);
+      expect(response.json().banners[0]).toMatchObject({
+        id: 'banner-topup',
+        targetType: 'CATEGORY',
+        targetCategoryId: TOP_UP_CATEGORY_ID
+      });
+
+      const where = prisma.banner.findMany.mock.calls[0][0].where;
+      // Top-level targetType=CATEGORY must keep HOME banners out of category pages.
+      expect(where.targetType).toBe('CATEGORY');
+      // Schedule window survives (startsAt branch untouched)…
+      expect(where.OR).toEqual([{ startsAt: null }, { startsAt: { lte: expect.any(Date) } }]);
+      // …and targeting narrows via AND: HOME allowed only when no targetType filter,
+      // CATEGORY only for the requested category id.
+      expect(where.AND).toHaveLength(2);
+      expect(where.AND[1].OR).toEqual([
+        { targetType: 'HOME' },
+        { AND: [{ targetType: 'CATEGORY' }, { targetCategoryId: TOP_UP_CATEGORY_ID }] }
+      ]);
+    });
+
+    it('TEST C: non-matching category targets only that other category', async () => {
+      prisma.user.findUnique.mockResolvedValue(mockDbUser);
+      prisma.banner.findMany.mockResolvedValue([]);
+
+      const response = await app.inject({
+        method: 'GET',
+        url: `/api/banners?targetType=CATEGORY&categoryId=${OTHER_CATEGORY_ID}`,
+        headers: authHeaders
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json().banners).toEqual([]);
+
+      const where = prisma.banner.findMany.mock.calls[0][0].where;
+      expect(where.AND).toHaveLength(2);
+      expect(where.AND[1].OR).toEqual([
+        { targetType: 'HOME' },
+        { AND: [{ targetType: 'CATEGORY' }, { targetCategoryId: OTHER_CATEGORY_ID }] }
+      ]);
+    });
+
+    it('TEST D+E: inactive and out-of-schedule banners are excluded by the query', async () => {
+      prisma.user.findUnique.mockResolvedValue(mockDbUser);
+      prisma.banner.findMany.mockResolvedValue([]);
+
+      // The route snapshots its clock during the request, so the comparison
+      // window must start before the request fires (post-response timestamps
+      // can land on the next millisecond and flake).
+      const before = new Date();
+      const response = await app.inject({
+        method: 'GET',
+        url: '/api/banners?targetType=HOME',
+        headers: authHeaders
+      });
+
+      expect(response.statusCode).toBe(200);
+
+      const where = prisma.banner.findMany.mock.calls[0][0].where;
+      const after = new Date();
+      // Inactive banners can never be served.
+      expect(where.isActive).toBe(true);
+      // Schedule window: startsAt <= now (not yet scheduled excluded)…
+      expect(where.OR).toEqual([
+        { startsAt: null },
+        { startsAt: { lte: expect.any(Date) } }
+      ]);
+      expect((where.OR[1] as { startsAt: { lte: Date } }).startsAt.lte.getTime()).toBeGreaterThanOrEqual(
+        before.getTime()
+      );
+      expect((where.OR[1] as { startsAt: { lte: Date } }).startsAt.lte.getTime()).toBeLessThanOrEqual(
+        after.getTime()
+      );
+      // …and endsAt > now (expired banners excluded; the endAt instant itself
+      // is no longer visible per the scheduling contract).
+      const endsAtBranch = where.AND[0].OR;
+      expect(endsAtBranch).toEqual([
+        { endsAt: null },
+        { endsAt: { gt: expect.any(Date) } }
+      ]);
+      expect((endsAtBranch[1] as { endsAt: { gt: Date } }).endsAt.gt.getTime()).toBeLessThanOrEqual(
+        after.getTime()
+      );
+    });
+
+    it('TEST F: multiple banners keep sortOrder ordering and are capped', async () => {
+      prisma.user.findUnique.mockResolvedValue(mockDbUser);
+      prisma.banner.findMany.mockResolvedValue([topUpBanner, homeBanner]);
+
+      const response = await app.inject({
+        method: 'GET',
+        url: `/api/banners?targetType=CATEGORY&categoryId=${TOP_UP_CATEGORY_ID}`,
+        headers: authHeaders
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json().banners.map((b: { id: string }) => b.id)).toEqual(['banner-topup', 'banner-home']);
+
+      const options = prisma.banner.findMany.mock.calls[0][0];
+      expect(options.orderBy).toEqual([{ sortOrder: 'asc' }, { createdAt: 'desc' }]);
+      expect(options.take).toBe(20);
     });
   });

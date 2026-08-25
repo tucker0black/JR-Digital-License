@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPayment, expirePayment, getPaymentStatus } from '@/lib/api';
 import { QrDisplay } from '@/components/QrDisplay';
+import { useTranslation } from '@/lib/i18n';
 
 export interface PaymentPanelProps {
   orderId: string;
@@ -52,6 +53,7 @@ export function PaymentPanel({
   provider = 'KHQR',
   autoCreate = false
 }: PaymentPanelProps) {
+  const { t } = useTranslation();
   const [payment, setPayment] = useState<PaymentInfo | null>(null);
   const [status, setStatus] = useState('PENDING');
   const [loading, setLoading] = useState(autoCreate);
@@ -77,13 +79,13 @@ export function PaymentPanel({
         setPayment(null);
         paymentIdRef.current = null;
         setStatus('FAILED');
-        setError(err instanceof Error ? err.message : 'Unable to generate payment QR');
+        setError(err instanceof Error ? err.message : t('payment.qrError'));
       } finally {
         setLoading(false);
         setCreating(false);
       }
     },
-    [orderId, provider]
+    [orderId, provider, t]
   );
 
   useEffect(() => {
@@ -123,7 +125,6 @@ export function PaymentPanel({
           timeout = setTimeout(poll, getNextDelay());
         })
         .catch(() => {
-          // Keep polling; transient failures should not kill the session.
           timeout = setTimeout(poll, getNextDelay());
         });
     };
@@ -159,23 +160,24 @@ export function PaymentPanel({
   if (!payment) {
     if (creating || loading) {
       return (
-        <div className="rounded-2xl border border-line bg-card p-4 text-center">
-          <p className="font-medium text-ink">Generating payment…</p>
-          <p className="mt-1 text-sm text-soft">Creating a secure payment session</p>
+        <div className="rounded-2xl card-cosmic p-5 text-center">
+          <div className="mx-auto mb-2 h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+          <p className="font-medium text-ink">{t('payment.generating')}</p>
+          <p className="mt-1 text-sm text-soft">{t('payment.generatingSubtitle')}</p>
         </div>
       );
     }
 
     return (
-      <div className="space-y-3 rounded-2xl border border-line bg-card p-4 text-center">
-        <p className="font-medium text-danger">{error || 'Unable to generate payment QR'}</p>
+      <div className="space-y-3 rounded-2xl card-cosmic p-5 text-center">
+        <p className="font-medium text-danger">{error || t('payment.qrError')}</p>
         <button
           type="button"
           onClick={() => void handleCreatePayment(true)}
           disabled={loading}
-          className="rounded-xl bg-primary px-5 py-2.5 font-medium text-white transition hover:bg-primary-dark disabled:opacity-50"
+          className="rounded-xl bg-gradient-to-r from-primary to-violet px-5 py-2.5 font-semibold text-white shadow-md shadow-primary/20 transition-default hover:shadow-lg active:scale-95 disabled:opacity-50"
         >
-          {loading ? 'Retrying…' : 'Retry Payment'}
+          {loading ? t('payment.retrying') : t('payment.retry')}
         </button>
       </div>
     );
@@ -185,30 +187,32 @@ export function PaymentPanel({
 
   if (status === 'SUCCEEDED') {
     return (
-      <div className="rounded-2xl border border-success/30 bg-success/10 p-4 text-center">
-        <div className="mb-2 text-2xl text-success">✓</div>
-        <p className="font-medium text-success">Payment Completed</p>
-        <p className="mt-1 text-sm text-soft">Order has been paid successfully</p>
+      <div className="rounded-2xl border border-success/30 bg-success/10 p-5 text-center">
+        <div className="mx-auto mb-2 flex h-10 w-10 items-center justify-center rounded-full bg-success/20">
+          <span className="text-xl text-success">✓</span>
+        </div>
+        <p className="font-medium text-success">{t('payment.completedTitle')}</p>
+        <p className="mt-1 text-sm text-success/80">{t('payment.completedDescription')}</p>
       </div>
     );
   }
 
   if (status === 'EXPIRED' || status === 'CANCELLED' || status === 'FAILED') {
     return (
-      <div className="space-y-3 rounded-2xl border border-line bg-card p-4 text-center">
+      <div className="space-y-3 rounded-2xl card-cosmic p-5 text-center">
         <p className="font-medium text-danger">
-          {status === 'FAILED' ? 'Payment failed' : 'Payment session expired'}
+          {status === 'FAILED' ? t('payment.failedTitle') : t('payment.expiredOrCancelled')}
         </p>
         <p className="text-sm text-soft">
-          {error || 'No money was charged. You can start a new payment session.'}
+          {error || t('payment.noChargeNewSession')}
         </p>
         <button
           type="button"
           onClick={() => void handleCreatePayment(true)}
           disabled={loading}
-          className="rounded-xl bg-primary px-5 py-2.5 font-medium text-white transition hover:bg-primary-dark disabled:opacity-50"
+          className="rounded-xl bg-gradient-to-r from-primary to-violet px-5 py-2.5 font-semibold text-white shadow-md shadow-primary/20 transition-default hover:shadow-lg active:scale-95 disabled:opacity-50"
         >
-          {loading ? 'Creating…' : 'Create New Payment'}
+          {loading ? t('cart.creating') : t('payment.createNewPayment')}
         </button>
       </div>
     );
@@ -217,42 +221,42 @@ export function PaymentPanel({
   const statusStyle = statusStyles[status] || 'bg-muted text-soft';
 
   return (
-    <div className="animate-fade-up space-y-4 rounded-2xl border border-line bg-card p-4 sm:p-5">
+    <div className="animate-fade-up space-y-4 rounded-2xl card-cosmic p-4 sm:p-5">
       <div className="flex items-center justify-between">
-        <h2 className="font-semibold text-ink">KHQR Payment</h2>
-        <span className={`rounded-full px-3 py-1 text-sm font-medium ${statusStyle}`}>
+        <h2 className="font-semibold text-ink">{t('payment.khqrTitle')}</h2>
+        <span className={`rounded-lg px-3 py-1 text-xs font-medium ${statusStyle}`}>
           {status}
         </span>
       </div>
 
       {orderNumber !== undefined && (
         <p className="text-sm text-soft">
-          Order: <span className="font-semibold text-ink">#{orderNumber}</span>
+          {t('payment.orderLabel')} <span className="font-semibold text-ink">#{orderNumber}</span>
         </p>
       )}
 
-      <div className="space-y-2 text-sm">
+      <div className="space-y-2.5 text-sm">
         {payment.merchantName && (
           <div className="flex justify-between">
-            <span className="text-soft">Merchant</span>
+            <span className="text-soft">{t('payment.merchant')}</span>
             <span className="font-medium text-ink">{payment.merchantName}</span>
           </div>
         )}
         <div className="flex justify-between">
-          <span className="text-soft">Reference</span>
+          <span className="text-soft">{t('payment.reference')}</span>
           <span className="max-w-[150px] truncate font-mono text-xs text-ink">
             {payment.reference}
           </span>
         </div>
         <div className="flex justify-between">
-          <span className="text-soft">Amount</span>
+          <span className="text-soft">{t('payment.amount')}</span>
           <span className="font-bold text-primary">
             {orderTotal} {orderCurrency}
           </span>
         </div>
         {remaining && (
           <div className="flex justify-between">
-            <span className="text-soft">Expires in</span>
+            <span className="text-soft">{t('wallet.expiresIn')}</span>
             <span className={`font-mono ${remaining === 'Expired' ? 'text-danger' : 'text-ink'}`}>
               {remaining}
             </span>
@@ -266,7 +270,7 @@ export function PaymentPanel({
             value={payment.qrCodeImage ?? payment.qrCodeData}
             alt={`KHQR payment for order ${orderNumber !== undefined ? `#${orderNumber}` : ''}`}
           />
-          <p className="text-xs text-soft">Scan with the Bakong / KHQR app to pay</p>
+          <p className="text-xs text-soft">{t('payment.scanInstruction')}</p>
         </div>
       )}
 
@@ -275,9 +279,9 @@ export function PaymentPanel({
           href={payment.paymentUrl}
           target="_blank"
           rel="noopener noreferrer"
-          className="block rounded-xl bg-primary px-4 py-3 text-center font-medium text-white transition hover:bg-primary-dark"
+          className="block rounded-xl bg-gradient-to-r from-primary to-violet px-4 py-3 text-center font-semibold text-white shadow-md shadow-primary/20 transition-default hover:shadow-lg active:scale-95"
         >
-          Open Payment Page
+          {t('wallet.openPaymentPage')}
         </a>
       )}
 
@@ -296,9 +300,9 @@ export function PaymentPanel({
                 .catch(() => setError('Unable to refresh payment status'));
             }}
             disabled={loading}
-            className="flex-1 rounded-xl border border-line bg-muted/40 px-4 py-2 font-medium text-ink transition hover:border-primary/40 disabled:opacity-50"
+            className="flex-1 rounded-xl border border-line bg-card px-4 py-2.5 font-medium text-ink transition-default hover:border-primary/40 disabled:opacity-50"
           >
-            Refresh Status
+            {t('wallet.refreshStatus')}
           </button>
           <button
             type="button"
@@ -306,18 +310,26 @@ export function PaymentPanel({
               if (!payment) return;
               setLoading(true);
                 expirePayment(payment.id)
-                .then(() => {
-                  setStatus('EXPIRED');
-                  paymentIdRef.current = null;
+                .then((result) => {
+                  if (result.paid && result.status === 'SUCCEEDED') {
+                    setStatus('SUCCEEDED');
+                    setVerificationError(null);
+                    setError(null);
+                    return;
+                  }
+                  setStatus(result.status || 'EXPIRED');
+                  if (result.status === 'SUCCEEDED') {
+                    paymentIdRef.current = null;
+                  }
                   setError(null);
                 })
-                .catch(() => setError('Unable to expire payment'))
+                .catch(() => setError(t('payment.qrError')))
                 .finally(() => setLoading(false));
             }}
             disabled={loading}
-            className="flex-1 rounded-xl border border-danger/30 bg-danger/10 px-4 py-2 font-medium text-danger transition hover:bg-danger/20 disabled:opacity-50"
+            className="flex-1 rounded-xl border border-danger/30 bg-danger/10 px-4 py-2.5 font-medium text-danger transition-default hover:bg-danger/20 disabled:opacity-50"
           >
-            Cancel
+            {t('wallet.cancel')}
           </button>
         </div>
       )}

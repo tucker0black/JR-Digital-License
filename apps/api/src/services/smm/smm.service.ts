@@ -145,26 +145,46 @@ export class SmmService {
 
     // Get the first order item that is an SMM service
     const smmItem = order.items.find(orderItem => {
-      return orderItem.product?.deliveryType === 'SMM';
+      return orderItem.product?.deliveryType === 'SMM' || orderItem.deliveryTypeSnapshot === 'SMM';
     });
 
     if (!smmItem) {
       return { success: false, error: 'No SMM service found in order' };
     }
 
-    // Get the SmmService linked to the product
-    const product = await this.prisma.product.findUnique({
-      where: { id: smmItem.productId! },
-      include: { smmService: { include: { provider: true } } }
-    });
-
-    if (!product?.smmService) {
-      return { success: false, error: 'No SMM service linked to this product' };
+    // Resolve the SmmService from the selected provider service ID snapshot.
+    // Fall back to the first active service linked to the product for legacy orders.
+    let smmService = null;
+    if (smmItem.providerServiceIdSnapshot) {
+      smmService = await this.prisma.smmService.findFirst({
+        where: {
+          providerServiceId: smmItem.providerServiceIdSnapshot,
+          status: 'ACTIVE'
+        },
+        include: { provider: true }
+      });
     }
 
-    const smmService = product.smmService;
+    if (!smmService && smmItem.productId) {
+      smmService = await this.prisma.smmService.findFirst({
+        where: { productId: smmItem.productId, status: 'ACTIVE' },
+        include: { provider: true },
+        orderBy: { name: 'asc' }
+      });
+    }
 
-    const providerInstance = this.factory.getProvider(provider);
+    if (!smmService) {
+      return { success: false, error: 'No active SMM service linked to this order item' };
+    }
+
+    if (!smmService.provider) {
+      return { success: false, error: 'SMM provider is not available' };
+    }
+
+    let providerInstance = this.factory.getProvider(provider);
+    if (!providerInstance.isAvailable()) {
+      providerInstance = this.factory.getProvider('MANUAL');
+    }
 
     const createParams = {
       orderId,

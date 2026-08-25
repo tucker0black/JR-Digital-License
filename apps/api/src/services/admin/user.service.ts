@@ -1,5 +1,6 @@
 import type { PrismaClient, UserStatus } from '@prisma/client';
 import { Prisma } from '@prisma/client';
+import { customerIdFromTelegramId } from '@jr/shared';
 import { PAID_ORDER_STATUSES } from '../customer-stats.service.js';
 
 /**
@@ -34,11 +35,16 @@ export class AdminUserService {
     const where: Record<string, unknown> = {};
 
     if (search) {
+      const numericMatch = /^\d+$/.test(search) ? BigInt(search) : null;
+      const customerIdMatch = /^ID(\d+)$/i.test(search.trim())
+        ? BigInt(/^ID(\d+)$/i.exec(search.trim())![1]!)
+        : null;
+      const telegramSearch = numericMatch ?? customerIdMatch;
       where.OR = [
         { firstName: { contains: search, mode: 'insensitive' } },
         { lastName: { contains: search, mode: 'insensitive' } },
         { username: { contains: search, mode: 'insensitive' } },
-        { telegramId: { equals: /^\d+$/.test(search) ? BigInt(search) : -1n } }
+        { telegramId: { equals: telegramSearch ?? -1n } }
       ];
     }
 
@@ -280,6 +286,7 @@ function serializeUser(user: {
   return {
     id: user.id,
     telegramId: user.telegramId.toString(),
+    customerId: customerIdFromTelegramId(user.telegramId),
     username: user.username,
     firstName: user.firstName,
     lastName: user.lastName,

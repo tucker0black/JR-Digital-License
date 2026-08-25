@@ -1,8 +1,8 @@
 'use client';
 
 import type { FormEvent } from 'react';
-import { useMemo, useState } from 'react';
-import type { ProductDetail } from '@jr/shared';
+import { useEffect, useMemo, useState } from 'react';
+import type { ProductDetail, AdminSmmService } from '@jr/shared';
 import { Badge, Button, Card, EmptyState, ErrorState, Field, Input, LoadingState, PageHeader, Pagination, Select, StatusBadge, Table, Textarea, formatMoney } from '@/components/admin/ui';
 import { useAsync } from '@/components/admin/use-async';
 import { humanizeError } from '@/lib/errors';
@@ -16,6 +16,7 @@ import {
   duplicateAdminProduct,
   getAdminCategories,
   getAdminProducts,
+  getAdminSmmServices,
   updateAdminProduct
 } from '@/lib/api-admin';
 
@@ -53,6 +54,8 @@ interface ProductFormState {
   sortOrder: string;
   instructions: string;
   keywords: string;
+  smmServiceIds: string[];
+  isHandDelivery: boolean;
 }
 
 const emptyForm: ProductFormState = {
@@ -76,7 +79,9 @@ const emptyForm: ProductFormState = {
   isPopular: false,
   sortOrder: '0',
   instructions: '',
-  keywords: ''
+  keywords: '',
+  smmServiceIds: [],
+  isHandDelivery: false
 };
 
 function slugify(name: string): string {
@@ -109,13 +114,16 @@ function toForm(product: ProductDetail): ProductFormState {
     isPopular: product.isPopular,
     sortOrder: String(product.sortOrder),
     instructions: product.instructions ?? '',
-    keywords: product.keywords.join(', ')
+    keywords: product.keywords.join(', '),
+    smmServiceIds: (product.smmServices ?? []).map((s) => s.id),
+    isHandDelivery: product.isHandDelivery
   };
 }
 
-function ProductForm({ initial, categories, onSubmit, onCancel, submitLabel }: {
+function ProductForm({ initial, categories, smmServices, onSubmit, onCancel, submitLabel }: {
   initial: ProductFormState;
   categories: { id: string; name: string }[];
+  smmServices: AdminSmmService[];
   onSubmit: (form: ProductFormState) => Promise<void>;
   onCancel: () => void;
   submitLabel: string;
@@ -242,6 +250,10 @@ function ProductForm({ initial, categories, onSubmit, onCancel, submitLabel }: {
           <input type="checkbox" checked={form.hideWhenOutOfStock} onChange={(e) => set('hideWhenOutOfStock', e.target.checked)} />
           Hide when out of stock
         </label>
+        <label className="flex items-center gap-2 text-sm text-slate-300">
+          <input type="checkbox" checked={form.isHandDelivery} onChange={(e) => set('isHandDelivery', e.target.checked)} />
+          Hand Delivery (admin fulfills manually)
+        </label>
       </div>
 
       <Field label="Description">
@@ -250,6 +262,64 @@ function ProductForm({ initial, categories, onSubmit, onCancel, submitLabel }: {
       <Field label="Instructions" hint="Shown to customers after purchase">
         <Textarea value={form.instructions} onChange={(e) => set('instructions', e.target.value)} />
       </Field>
+
+      <div className="rounded-lg border border-slate-700 bg-slate-900/60 p-4">
+        <div className="mb-2 flex items-center justify-between">
+          <p className="text-sm font-medium text-slate-200">SMM services</p>
+          <Badge tone={form.smmServiceIds.length > 0 ? 'success' : 'muted'}>
+            {form.smmServiceIds.length} linked
+          </Badge>
+        </div>
+        <p className="mb-3 text-xs text-slate-400">
+          Link active SMM services so customers can pick them on this product. Only services that are
+          not already linked to another product are listed.
+        </p>
+        {smmServices.length === 0 ? (
+          <p className="text-xs text-slate-500">
+            No available SMM services. Add services under Admin {'>'} SMM Providers first.
+          </p>
+        ) : (
+          <div className="max-h-56 space-y-1.5 overflow-y-auto pr-1">
+            {smmServices.map((service) => {
+              const checked = form.smmServiceIds.includes(service.id);
+              return (
+                <label
+                  key={service.id}
+                  className={`flex cursor-pointer items-center justify-between gap-2 rounded-md border px-3 py-2 text-sm transition ${
+                    checked
+                      ? 'border-cyan-500/50 bg-cyan-500/10 text-slate-100'
+                      : 'border-slate-700 bg-slate-900 text-slate-300 hover:border-slate-500'
+                  }`}
+                >
+                  <span className="flex min-w-0 items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() =>
+                        set(
+                          'smmServiceIds',
+                          checked
+                            ? form.smmServiceIds.filter((id) => id !== service.id)
+                            : [...form.smmServiceIds, service.id]
+                        )
+                      }
+                    />
+                    <span className="truncate">
+                      {service.name}
+                      <span className="ml-2 text-xs text-slate-500">
+                        {service.provider.name} · {service.providerServiceId}
+                      </span>
+                    </span>
+                  </span>
+                  <span className="shrink-0 text-xs text-slate-400">
+                    Min {service.minimumQuantity} · Max {service.maximumQuantity}
+                  </span>
+                </label>
+              );
+            })}
+          </div>
+        )}
+      </div>
 
       {error && <p className="text-sm text-red-400">{error}</p>}
 
@@ -268,6 +338,7 @@ function ProductForm({ initial, categories, onSubmit, onCancel, submitLabel }: {
 export default function AdminProductsPage() {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [status, setStatus] = useState('');
   const [categoryId, setCategoryId] = useState('');
   const [showCreate, setShowCreate] = useState(false);
@@ -279,19 +350,33 @@ export default function AdminProductsPage() {
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkError, setBulkError] = useState<string | null>(null);
 
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(search), 300);
+    return () => clearTimeout(timer);
+  }, [search]);
+
   const products = useAsync(
-    () => getAdminProducts({ page, pageSize: 20, search: search || undefined, status: status || undefined, categoryId: categoryId || undefined }),
-    [page, search, status, categoryId]
+    () => getAdminProducts({ page, pageSize: 20, search: debouncedSearch || undefined, status: status || undefined, categoryId: categoryId || undefined }),
+    [page, debouncedSearch, status, categoryId]
   );
   const categories = useAsync(() => getAdminCategories({ pageSize: 100 }), []);
   const categoryOptions = useMemo(
     () => (categories.data?.categories ?? []).map((c) => ({ id: c.id, name: c.name })),
     [categories.data]
   );
+  const smmServices = useAsync(() => getAdminSmmServices(), []);
+  const availableSmmServices = useMemo(
+    () =>
+      (smmServices.data?.services ?? []).filter(
+        (s) => s.status === 'ACTIVE' && (s.productId === null || s.productId === editingId)
+      ),
+    [smmServices.data, editingId]
+  );
 
   const refresh = () => {
     products.reload();
     categories.reload();
+    smmServices.reload();
   };
 
   const handleCreate = async (form: ProductFormState) => {
@@ -316,7 +401,9 @@ export default function AdminProductsPage() {
       isPopular: form.isPopular,
       sortOrder: Number(form.sortOrder || 0),
       instructions: form.instructions || null,
-      keywords: form.keywords.split(',').map((k) => k.trim()).filter(Boolean)
+      keywords: form.keywords.split(',').map((k) => k.trim()).filter(Boolean),
+      smmServiceIds: form.smmServiceIds,
+      isHandDelivery: form.isHandDelivery
     });
     setShowCreate(false);
     refresh();
@@ -345,7 +432,9 @@ export default function AdminProductsPage() {
       isPopular: form.isPopular,
       sortOrder: Number(form.sortOrder || 0),
       instructions: form.instructions || null,
-      keywords: form.keywords.split(',').map((k) => k.trim()).filter(Boolean)
+      keywords: form.keywords.split(',').map((k) => k.trim()).filter(Boolean),
+      smmServiceIds: form.smmServiceIds,
+      isHandDelivery: form.isHandDelivery
     });
     setEditingId(null);
     refresh();
@@ -444,7 +533,7 @@ export default function AdminProductsPage() {
     }
   };
 
-  if (products.loading) return <LoadingState label="Loading products…" />;
+  if (products.loading && !products.data) return <LoadingState label="Loading products…" />;
   if (products.error) return <ErrorState error={products.error} onRetry={refresh} />;
 
   return (
@@ -478,6 +567,7 @@ export default function AdminProductsPage() {
           <ProductForm
             initial={emptyForm}
             categories={categoryOptions}
+            smmServices={availableSmmServices}
             onSubmit={handleCreate}
             onCancel={() => setShowCreate(false)}
             submitLabel="Create Product"
@@ -529,6 +619,7 @@ export default function AdminProductsPage() {
                   stockEditor={stockForId === product.id}
                   selected={selected.has(product.id)}
                   categories={categoryOptions}
+                  smmServices={availableSmmServices}
                   onToggleSelect={() => toggleSelected(product.id)}
                   onEdit={() => setEditingId(editingId === product.id ? null : product.id)}
                   onSave={handleUpdate}
@@ -551,12 +642,13 @@ export default function AdminProductsPage() {
   );
 }
 
-function ProductRow({ product, editing, stockEditor, selected, categories, onToggleSelect, onEdit, onSave, onCancel, onToggle, onDelete, onDuplicate, onStock, onAddStock }: {
+function ProductRow({ product, editing, stockEditor, selected, categories, smmServices, onToggleSelect, onEdit, onSave, onCancel, onToggle, onDelete, onDuplicate, onStock, onAddStock }: {
   product: ProductDetail;
   editing: boolean;
   stockEditor: boolean;
   selected: boolean;
   categories: { id: string; name: string }[];
+  smmServices: AdminSmmService[];
   onToggleSelect: () => void;
   onEdit: () => void;
   onSave: (form: ProductFormState) => Promise<void>;
@@ -598,6 +690,7 @@ function ProductRow({ product, editing, stockEditor, selected, categories, onTog
             {!product.isActive && <Badge tone="danger">Hidden</Badge>}
             {product.isFeatured && <Badge tone="accent">Featured</Badge>}
             {product.isPopular && <Badge tone="warning">Popular</Badge>}
+            {product.isHandDelivery && <Badge tone="accent">Hand Delivery</Badge>}
           </div>
         </td>
         <td className="px-3 py-2">
@@ -623,6 +716,7 @@ function ProductRow({ product, editing, stockEditor, selected, categories, onTog
             <ProductForm
               initial={toForm(product)}
               categories={categories}
+              smmServices={smmServices}
               onSubmit={onSave}
               onCancel={onCancel}
               submitLabel="Save Changes"

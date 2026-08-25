@@ -3,24 +3,39 @@
 import { Suspense, useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useParams, useSearchParams } from 'next/navigation';
-import { getCategory, getProducts } from '@/lib/api';
-import type { Category, Product } from '@/lib/api';
+import { useRouter } from 'next/navigation';
+import { getBanners, getCategory, getProducts } from '@/lib/api';
+import type { Category, CustomerBanner, Product } from '@/lib/api';
 import { ProductCard } from '@/components/ProductCard';
 import { SearchBar } from '@/components/SearchBar';
 import { StoreHeader } from '@/components/StoreHeader';
 import { EmptyState } from '@/components/EmptyState';
 import { Button } from '@/components/Button';
-import { Skeleton } from '@/components/Skeleton';
+import { Skeleton, ProductCardSkeleton } from '@/components/Skeleton';
+import { CategoryIcon } from '@/components/CategoryIcon';
+import { BannerCarousel } from '@/components/BannerCarousel';
+import { TOP_UP_CATEGORY_SLUGS } from '@/lib/banners';
+import { useTranslation } from '@/lib/i18n';
 
 function CategoryContent() {
   const { slug } = useParams<{ slug: string }>();
   const searchParams = useSearchParams();
   const search = searchParams.get('search') ?? '';
+  const router = useRouter();
+  const { t } = useTranslation();
 
   const [category, setCategory] = useState<Category | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
+  const [banners, setBanners] = useState<CustomerBanner[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Redirect Top-Up category to unified Top-Up page
+  useEffect(() => {
+    if (TOP_UP_CATEGORY_SLUGS.includes(slug)) {
+      router.replace('/topup');
+    }
+  }, [slug, router]);
 
   const loadCategory = useCallback(async () => {
     setLoading(true);
@@ -29,14 +44,22 @@ function CategoryContent() {
       const { category: loaded } = await getCategory(slug);
       setCategory(loaded);
       setProducts(loaded.products);
+      if (loaded.id) {
+        try {
+          const bannerResult = await getBanners({ targetType: 'CATEGORY', categoryId: loaded.id });
+          setBanners(bannerResult.banners);
+        } catch {
+          // Banners are optional, don't fail the page
+        }
+      }
     } catch {
       setCategory(null);
       setProducts([]);
-      setError('This category is not available.');
+      setError(t('category.unavailableDescription'));
     } finally {
       setLoading(false);
     }
-  }, [slug]);
+  }, [slug, t]);
 
   const loadSearch = useCallback(async () => {
     setLoading(true);
@@ -45,11 +68,11 @@ function CategoryContent() {
       const result = await getProducts({ search, category: slug, pageSize: 24 });
       setProducts(result.products);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Search failed');
+      setError(err instanceof Error ? err.message : t('store.searchUnavailable'));
     } finally {
       setLoading(false);
     }
-  }, [search, slug]);
+  }, [search, slug, t]);
 
   useEffect(() => {
     if (search) {
@@ -61,13 +84,13 @@ function CategoryContent() {
 
   if (loading && !category && !error) {
     return (
-      <main className="min-h-screen bg-page text-ink">
+      <main className="min-h-screen bg-page bg-cosmic text-ink">
         <StoreHeader />
         <div className="mx-auto w-full max-w-5xl px-4 pb-24 pt-6 sm:px-6 sm:pt-8 md:pb-16">
           <Skeleton className="h-9 w-40 rounded-xl" />
-          <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 lg:grid-cols-4">
+          <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 lg:grid-cols-4" aria-hidden="true">
             {[0, 1, 2, 3, 4, 5].map((i) => (
-              <Skeleton key={i} className="aspect-[3/4] w-full rounded-2xl" />
+              <ProductCardSkeleton key={i} />
             ))}
           </div>
         </div>
@@ -82,7 +105,7 @@ function CategoryContent() {
         <header className="mb-5">
           <Link
             href="/store"
-            className="inline-flex items-center gap-1.5 text-sm text-soft transition hover:text-primary"
+            className="inline-flex items-center gap-1.5 text-sm text-soft transition-default hover:text-primary"
           >
             <svg
               xmlns="http://www.w3.org/2000/svg"
@@ -97,19 +120,11 @@ function CategoryContent() {
               <path d="m12 19-7-7 7-7" />
               <path d="M19 12H5" />
             </svg>
-            Back to Store
+            {t('category.backToStore')}
           </Link>
           {category && !search && (
             <div className="mt-3 flex items-center gap-3">
-              {category.icon ? (
-                <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-primary-soft text-xl">
-                  {category.icon}
-                </span>
-              ) : (
-                <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-muted text-base font-bold text-soft">
-                  {category.name.charAt(0)}
-                </span>
-              )}
+              <CategoryIcon size="lg" imageUrl={category.imageUrl} icon={category.icon} name={category.name} />
               <div>
                 <h1 className="text-2xl font-bold tracking-tight text-ink">{category.name}</h1>
                 {category.description && (
@@ -120,39 +135,46 @@ function CategoryContent() {
           )}
           {search && (
             <h1 className="mt-3 text-2xl font-bold tracking-tight text-ink">
-              Results for &quot;{search}&quot;
+              {t('category.resultsFor', { search })}
             </h1>
           )}
         </header>
 
         <SearchBar category={slug} />
 
+        {/* Category Banners */}
+        {banners.length > 0 && (
+          <div className="mt-5">
+            <BannerCarousel banners={banners} />
+          </div>
+        )}
+
         {error ? (
           <div className="mt-8">
             <EmptyState
-              title="Category unavailable"
+              title={t('category.unavailable')}
               description={error}
-              action={<Button href="/store">Browse all categories</Button>}
+              action={<Button href="/store">{t('category.browseAll')}</Button>}
             />
           </div>
         ) : loading && products.length === 0 ? (
-          <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 lg:grid-cols-4">
+          <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 lg:grid-cols-4" aria-hidden="true">
             {[0, 1, 2, 3, 4, 5].map((i) => (
-              <Skeleton key={i} className="aspect-[3/4] w-full rounded-2xl" />
+              <ProductCardSkeleton key={i} />
             ))}
           </div>
         ) : products.length === 0 ? (
           <div className="mt-8">
             <EmptyState
-              title={search ? 'No matching products' : 'No products in this category'}
+              title={search ? t('category.noMatch') : t('category.noProducts')}
               description={
                 search
-                  ? `Nothing matched "${search}" in this category.`
-                  : 'New products will appear here as they become available.'
+                  ? t('category.noMatchDescription', { search })
+                  : t('category.newProducts')
               }
               action={
                 <Button href={search ? `/store/${slug}` : '/store'}>
-                  {search ? 'Clear search' : 'Browse all categories'}
+                  {search ? t('category.clearSearch') : t('category.browseAll')}
                 </Button>
               }
             />

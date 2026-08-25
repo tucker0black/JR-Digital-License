@@ -88,6 +88,22 @@ export interface GetPaymentStatusResult {
   error?: string;
 }
 
+export interface CancelPaymentResult {
+  success: boolean;
+  status: 'PENDING' | 'PROCESSING' | 'SUCCEEDED' | 'FAILED' | 'EXPIRED' | 'CANCELLED';
+  paid?: boolean;
+  cancelled?: boolean;
+  alreadyTerminal?: boolean;
+  error?: string;
+}
+
+/**
+ * Provider errors that still authoritatively prove the payment is unpaid
+ * (e.g. Bakong reporting no transaction for the QR). Cancellation is safe
+ * only when the backend can confirm the payment was NOT actually paid.
+ */
+const DEFINITELY_UNPAID = /not.*confirm|not.*found|still in flight|waiting/i;
+
 function createPaymentReference(prefix: 'JR-DP' | 'JR-OR'): string {
   return `${prefix}-${Date.now().toString(36).toUpperCase()}-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
 }
@@ -558,6 +574,68 @@ export class PaymentService {
     };
   }
 
+  /**
+   * Customer-initiated cancellation of a payment session.
+   *
+   * The server re-checks the authoritative payment state BEFORE cancelling:
+   * if the customer actually paid (verified server-side), success wins and
+   * cancellation never turns a genuinely paid payment back into an unpaid
+   * one. If the provider cannot confirm the payment is unpaid (connectivity
+   * or configuration problems), cancellation is refused so money is never
+   * stranded by a cancel racing a real payment.
+   */
+  async cancelPayment(paymentId: string, userId: string): Promise<CancelPaymentResult> {
+    const payment = await this.prisma.payment.findUnique({
+      where: { id: paymentId },
+      include: { order: true }
+    });
+
+    if (!payment || payment.userId !== userId) {
+      return { success: false, status: 'PENDING', error: 'Payment not found' };
+    }
+
+    if (payment.status === 'SUCCEEDED') {
+      return { success: true, status: 'SUCCEEDED', paid: true, alreadyTerminal: true };
+    }
+
+    if (payment.status === 'CANCELLED' || payment.status === 'EXPIRED' || payment.status === 'FAILED') {
+      return { success: true, status: payment.status, alreadyTerminal: true };
+    }
+
+    // Authoritative recheck: the backend decides, never the frontend.
+    const verification = await this.verifyPayment(paymentId);
+
+    if (verification.status === 'SUCCEEDED') {
+      return { success: true, status: 'SUCCEEDED', paid: true };
+    }
+
+    if (verification.status === 'FAILED') {
+      return { success: true, status: 'FAILED' };
+    }
+
+    if (verification.status === 'EXPIRED' || verification.status === 'CANCELLED') {
+      return { success: true, status: verification.status };
+    }
+
+    // Still pending: only proceed when the provider could authoritatively
+    // confirm the payment is genuinely unpaid. An indeterminate outcome
+    // (network/configuration error) means we must not expire the session.
+    if (verification.status === 'PENDING' || verification.status === 'PROCESSING') {
+      if (verification.error && !DEFINITELY_UNPAID.test(verification.error)) {
+        return {
+          success: false,
+          status: 'PENDING',
+          error: 'Payment status could not be confirmed. The payment is still valid — try cancelling again.'
+        };
+      }
+
+      await this.expirePayment(paymentId);
+      return { success: true, status: 'EXPIRED', cancelled: true };
+    }
+
+    return { success: false, status: 'PENDING', error: 'Payment status could not be determined' };
+  }
+
   async expirePayment(paymentId: string): Promise<void> {
     const payment = await this.prisma.payment.findUnique({
       where: { id: paymentId },
@@ -726,9 +804,35 @@ export class PaymentService {
 
     if (transitioned && payment.orderId && this.notificationService) {
       void this.notifyOrderPaid(payment.orderId);
+      void this.createCustomerOrderNotification(payment.orderId);
     }
 
     return transitioned;
+  }
+
+  private async createCustomerOrderNotification(orderId: string): Promise<void> {
+    try {
+      const order = await this.prisma.order.findUnique({
+        where: { id: orderId },
+        include: { items: true, user: { select: { id: true } } }
+      });
+      if (!order) return;
+
+      const productNames = order.items.map((item) => item.productNameSnapshot).join(', ');
+      
+      await this.prisma.customerNotification.create({
+        data: {
+          userId: order.userId,
+            type: 'ORDER_PAID',
+            title: 'Payment Confirmed',
+            message: `Your order #${order.orderNumber} for ${productNames} has been paid successfully.`,
+            orderId: order.id,
+            dedupeKey: `order:${order.id}:ORDER_PAID`
+          }
+      });
+    } catch (error) {
+      console.error('Failed to create customer notification:', error);
+    }
   }
 
   private async notifyOrderPaid(orderId: string): Promise<void> {

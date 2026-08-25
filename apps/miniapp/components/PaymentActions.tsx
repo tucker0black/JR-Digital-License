@@ -4,11 +4,17 @@ import { useEffect, useState } from 'react';
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { getWallet, payOrderWithWallet } from '@/lib/api';
+import { useTranslation } from '@/lib/i18n';
 
 const PaymentPanel = dynamic(
   () => import('@/components/PaymentPanel').then((module) => module.PaymentPanel),
-  { loading: () => <div className="rounded-2xl border border-line bg-card p-4 text-center text-sm text-soft">Loading payment options…</div> }
+  { loading: () => <PaymentOptionsLoading /> }
 );
+
+function PaymentOptionsLoading() {
+  const { t } = useTranslation();
+  return <div className="rounded-2xl border border-line bg-card p-4 text-center text-sm text-soft">{t('cart.loadingPaymentOptions')}</div>;
+}
 
 interface PaymentActionsProps {
   orderId: string;
@@ -25,6 +31,7 @@ export function PaymentActions({
   orderTotal,
   orderCurrency
 }: PaymentActionsProps) {
+  const { t } = useTranslation();
   const [provider, setProvider] = useState<'KHQR' | null>(null);
   const [walletBalance, setWalletBalance] = useState<number | null>(null);
   const [walletLoading, setWalletLoading] = useState(true);
@@ -57,8 +64,8 @@ export function PaymentActions({
     return (
       <div className="rounded-2xl border border-success/30 bg-success/10 p-4 text-center">
         <div className="mb-2 text-2xl text-success">✓</div>
-        <p className="font-medium text-success">Payment Completed</p>
-        <p className="mt-1 text-sm text-soft">Order has been paid successfully</p>
+        <p className="font-medium text-success">{t('payment.completedTitle')}</p>
+        <p className="mt-1 text-sm text-soft">{t('payment.completedDescription')}</p>
       </div>
     );
   }
@@ -66,8 +73,8 @@ export function PaymentActions({
   if (isExpired) {
     return (
       <div className="rounded-2xl border border-danger/30 bg-danger/10 p-4 text-center">
-        <p className="font-medium text-danger">Payment Expired</p>
-        <p className="mt-1 text-sm text-soft">The payment session has expired</p>
+        <p className="font-medium text-danger">{t('payment.expiredTitle')}</p>
+        <p className="mt-1 text-sm text-soft">{t('payment.expiredDescription')}</p>
       </div>
     );
   }
@@ -75,7 +82,7 @@ export function PaymentActions({
   if (!isPayable) {
     return (
       <div className="rounded-2xl border border-line bg-card p-4 text-center">
-        <p className="font-medium text-soft">Payment not available for this order status</p>
+        <p className="font-medium text-soft">{t('payment.unavailableStatus')}</p>
       </div>
     );
   }
@@ -93,7 +100,10 @@ export function PaymentActions({
     );
   }
 
-  const canPayWithWallet = walletBalance !== null && walletBalance >= Number(orderTotal);
+  const total = Number(orderTotal);
+  const balanceKnown = walletBalance !== null;
+  const canPayWithWallet = balanceKnown && walletBalance >= total;
+  const hasActiveKhqrSession = walletError !== null && walletError.toLowerCase().includes('active payment session');
 
   const handleWalletPay = async () => {
     setWalletError(null);
@@ -105,69 +115,108 @@ export function PaymentActions({
       );
       setWalletPaid(true);
     } catch (err) {
-      setWalletError(err instanceof Error ? err.message : 'Unable to pay with wallet balance');
+      const message = err instanceof Error ? err.message : t('payment.walletPayError');
+      setWalletError(message);
+      if (message.toLowerCase().includes('active payment session')) {
+        setProvider('KHQR');
+      }
     } finally {
       setWalletPaying(false);
     }
   };
 
   return (
-    <div className="animate-fade-up space-y-4 rounded-2xl border border-line bg-card p-4 sm:p-5">
-      <div>
-        <label className="mb-2 block text-sm text-soft">Select Payment Method</label>
-        <div className="grid grid-cols-2 gap-2">
-          <button
-            type="button"
-            onClick={() => setProvider('KHQR')}
-            className="flex flex-col items-center gap-1 rounded-xl border border-line bg-muted/40 px-4 py-3.5 font-medium text-ink transition hover:border-primary/40 hover:bg-primary/5"
-          >
-            <span className="text-lg">🏦</span>
-            <span>KHQR / Bakong</span>
-            <span className="text-xs text-soft">Scan with Bakong app</span>
-          </button>
-          <div className="flex flex-col items-center justify-center gap-1 rounded-xl border border-dashed border-line bg-muted/30 px-4 py-3.5">
-            <span className="text-lg">👛</span>
-            <span className="font-medium text-ink">Wallet Balance</span>
-            <span className="text-xs text-soft">
-              Balance: {orderCurrency}{' '}
-              {walletBalance !== null ? walletBalance.toFixed(2) : '—'}
-            </span>
-          </div>
-        </div>
+    <div className="animate-fade-up space-y-4 rounded-2xl border border-line/50 bg-card p-4 sm:p-5">
+      <div className="flex items-center justify-between">
+        <p className="font-semibold text-ink">{t('payment.methodTitle')}</p>
+        <span className="text-sm text-soft">
+          {t('payment.totalPrefix')} <strong className="text-primary">{orderTotal} {orderCurrency}</strong>
+        </span>
       </div>
 
-      <div>
+      <div className="grid grid-cols-2 gap-3">
         <button
           type="button"
           onClick={() => void handleWalletPay()}
           disabled={walletLoading || walletPaying || !canPayWithWallet}
-          className="flex w-full items-center justify-center gap-2 rounded-xl border border-primary/40 bg-primary/10 px-4 py-3 font-medium text-primary transition hover:bg-primary/20 disabled:opacity-50"
+          className={`flex flex-col items-center gap-1 rounded-xl border px-4 py-3.5 font-medium transition-luxury disabled:cursor-not-allowed disabled:opacity-50 ${
+            canPayWithWallet
+              ? 'border-primary/30 bg-primary/10 text-primary hover:bg-primary/15 hover:shadow-glow-sm'
+              : 'border-line/50 bg-muted/30 text-soft'
+          }`}
         >
-          {walletLoading
-            ? 'Checking balance…'
-            : walletBalance === null
-              ? 'Pay with Balance'
-              : canPayWithWallet
-                ? `Pay ${orderTotal} ${orderCurrency} with Balance`
-                : `Insufficient balance (${orderCurrency} ${walletBalance.toFixed(2)})`}
-          {walletPaying && <span>…</span>}
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5" aria-hidden="true">
+            <rect x="3" y="6" width="18" height="14" rx="3" />
+            <path d="M3 10h18" />
+            <circle cx="16.5" cy="15.5" r="1.5" />
+          </svg>
+          <span className="text-ink">{t('payment.payWithWallet')}</span>
+          <span className="text-xs text-soft">
+            {walletLoading
+              ? t('payment.checkingBalance')
+              : balanceKnown
+                ? t('payment.balanceLabel', { amount: `${orderCurrency} ${walletBalance.toFixed(2)}` })
+                : t('payment.balanceUnavailable')}
+          </span>
+          {walletPaying && <span className="text-xs">{'Processing\u2026'}</span>}
         </button>
-        {walletError && <p className="mt-2 text-sm text-danger">{walletError}</p>}
-        {!canPayWithWallet && walletBalance !== null && (
-          <Link
-            href="/wallet"
-            className="mt-2 block text-center text-sm font-medium text-primary transition hover:text-primary-dark"
-          >
-            + Deposit to your wallet
-          </Link>
-        )}
+
+        <button
+          type="button"
+          onClick={() => {
+            setWalletError(null);
+            setProvider('KHQR');
+          }}
+          className="flex flex-col items-center gap-1 rounded-xl border border-line/50 bg-card px-4 py-3.5 font-medium text-ink transition-luxury hover:border-primary/30 hover:bg-primary/5 hover:shadow-glow-sm"
+        >
+          <span className="text-lg">&#x1F3E6;</span>
+          <span>{t('payment.generateKhqr')}</span>
+          <span className="text-xs text-soft">{t('payment.scanWithBakongShort')}</span>
+        </button>
       </div>
 
-      <div className="rounded-xl border border-line bg-muted/40 p-3 text-sm text-soft">
-        <p>
-          <strong className="text-ink">Total:</strong> {orderTotal} {orderCurrency}
-        </p>
-        <p className="mt-1">Payment sessions expire automatically and never charge twice.</p>
+      {balanceKnown && !canPayWithWallet && (
+        <div className="rounded-xl border border-warning/30 bg-warning/10 px-4 py-3 text-sm">
+          <p className="font-medium text-warning">{t('payment.insufficientTitle')}</p>
+          <p className="mt-1 text-soft">
+            {t('payment.insufficientDescription', {
+              balance: `${orderCurrency} ${walletBalance.toFixed(2)}`,
+              total: `${orderCurrency} ${orderTotal}`
+            })}
+          </p>
+          <Link
+            href="/wallet"
+            className="mt-2 inline-block font-medium text-primary transition hover:text-primary-dark"
+          >
+            {t('payment.depositLink')}
+          </Link>
+        </div>
+      )}
+
+      {canPayWithWallet && (
+        <div className="rounded-xl border border-success/30 bg-success/10 px-4 py-3 text-sm">
+          <p className="font-medium text-success">{t('payment.sufficientTitle')}</p>
+          <p className="mt-1 text-soft">
+            {t('payment.sufficientDescription', { balance: `${orderCurrency} ${walletBalance.toFixed(2)}` })}
+          </p>
+        </div>
+      )}
+
+      {walletError && !hasActiveKhqrSession && (
+        <p className="text-sm text-danger">{walletError}</p>
+      )}
+
+      {hasActiveKhqrSession && (
+        <div className="rounded-xl border border-primary/30 bg-primary/10 px-4 py-3 text-sm">
+          <p className="font-medium text-primary">{t('payment.activeSessionTitle')}</p>
+          <p className="mt-1 text-soft">
+            {t('payment.activeSessionDescription')}
+          </p>
+        </div>
+      )}
+
+      <div className="rounded-xl border border-line/30 bg-muted/30 p-3 text-sm text-soft">
+        <p>{t('payment.sessionsExpireNote')}</p>
       </div>
     </div>
   );

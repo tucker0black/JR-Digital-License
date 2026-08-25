@@ -1,4 +1,5 @@
 import type { PrismaClient, SupportMessageSender } from '@prisma/client';
+import { SupportAvailabilityService } from './support-hours.service.js';
 
 function getUserDisplayName(user: { firstName: string; lastName: string | null; username: string | null }): string {
   return [user.firstName, user.lastName].filter(Boolean).join(' ').trim() || user.username || 'there';
@@ -16,7 +17,10 @@ function buildWelcomeMessageBody(customerName: string, ticketNumber: number): st
 }
 
 export class CustomerTicketService {
-  constructor(private prisma: PrismaClient) {}
+  constructor(
+    private prisma: PrismaClient,
+    private supportHours: SupportAvailabilityService = new SupportAvailabilityService()
+  ) {}
 
   async getUnreadCount(userId: string) {
     const unreadCount = await this.prisma.supportMessage.count({
@@ -70,6 +74,19 @@ export class CustomerTicketService {
   }
 
   async createTicket(userId: string, subject: string, body: string, orderId?: string | null) {
+    if (!this.supportHours.isOpen()) {
+      const pendingThread = await this.prisma.supportTicket.findFirst({
+        where: {
+          userId,
+          messages: { some: { sender: 'USER' }, none: { sender: 'ADMIN' } }
+        },
+        select: { id: true }
+      });
+      if (pendingThread) {
+        throw new Error(this.supportHours.buildBlockedMessage());
+      }
+    }
+
     const ticket = await this.prisma.$transaction(async (tx) => {
       if (orderId) {
         const order = await tx.order.findFirst({
@@ -226,6 +243,16 @@ export class CustomerTicketService {
 
     if (ticket.status === 'CLOSED') {
       throw new Error('Ticket is closed');
+    }
+
+    if (!this.supportHours.isOpen()) {
+      const [adminMessages, userMessages] = await Promise.all([
+        this.prisma.supportMessage.count({ where: { ticketId, sender: 'ADMIN' } }),
+        this.prisma.supportMessage.count({ where: { ticketId, sender: 'USER' } })
+      ]);
+      if (adminMessages === 0 && userMessages >= 1) {
+        throw new Error(this.supportHours.buildBlockedMessage());
+      }
     }
 
     return this.prisma.$transaction(async (tx) => {

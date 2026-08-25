@@ -1,6 +1,11 @@
 import crypto from 'node:crypto';
 import type { PrismaClient, PaymentStatus } from '@prisma/client';
-import { Prisma, WalletTransactionStatus, PaymentStatus as PaymentStatusEnum } from '@prisma/client';
+import {
+  Prisma,
+  WalletTransactionStatus,
+  WalletTransactionType,
+  PaymentStatus as PaymentStatusEnum
+} from '@prisma/client';
 
 export interface WalletInfo {
   balance: string;
@@ -71,6 +76,23 @@ export class CustomerWalletService {
     };
   }
 
+  /**
+   * Lightweight wallet lookup — returns only balance and currency.
+   * Skips the 50-transaction fetch used by getWallet().
+   */
+  async getWalletBalance(userId: string): Promise<WalletInfo> {
+    const wallet = await this.prisma.wallet.upsert({
+      where: { userId },
+      create: { userId, currency: 'USD', balance: 0 },
+      update: {}
+    });
+
+    return {
+      balance: wallet.balance.toString(),
+      currency: wallet.currency
+    };
+  }
+
   async creditDeposit(
     payment: { id: string; amount: Prisma.Decimal; currency: string; userId: string; reference: string },
     tx?: Prisma.TransactionClient
@@ -119,6 +141,21 @@ export class CustomerWalletService {
           reason: 'Deposit via KHQR/Bakong payment'
         }
       });
+
+      // Create customer notification for wallet deposit
+      try {
+        await client.customerNotification.create({
+            data: {
+              userId: payment.userId,
+              type: 'WALLET_DEPOSIT',
+              title: 'Deposit Successful',
+              message: `Your wallet has been credited with ${payment.amount} ${payment.currency}. New balance: ${balanceAfter} ${payment.currency}.`,
+              dedupeKey: `payment:${payment.id}:WALLET_DEPOSIT`
+            }
+        });
+      } catch (error) {
+        console.error('Failed to create customer notification:', error);
+      }
     };
 
     if (tx) {
@@ -175,6 +212,13 @@ export class CustomerWalletService {
       return { success: false, error: 'Order already paid' };
     }
 
+    // Block wallet payment if another payment rail has already been initiated
+    // for the same order, so a customer cannot double-charge by paying from the
+    // wallet while a KHQR session is still active.
+    if (order.status === 'PAYMENT_PENDING' || order.status === 'PROCESSING' || order.status === 'FULFILLING') {
+      return { success: false, error: 'Order already has an active payment session' };
+    }
+
     if (order.status === 'CANCELLED' || order.status === 'EXPIRED' || order.status === 'REFUNDED') {
       return { success: false, error: 'Order cannot be paid' };
     }
@@ -183,11 +227,42 @@ export class CustomerWalletService {
 
     try {
       const result = await this.prisma.$transaction(async (tx) => {
-        const wallet = await tx.wallet.upsert({
-          where: { userId },
-          create: { userId, currency: order.currency, balance: 0 },
-          update: {}
+        const orderForUpdate = await tx.order.findUnique({
+          where: { id: order.id },
+          select: { status: true }
         });
+
+        if (!orderForUpdate) {
+          throw new Error('Order not found');
+        }
+
+        if (
+          orderForUpdate.status === 'PAID' ||
+          orderForUpdate.status === 'COMPLETED' ||
+          orderForUpdate.status === 'PAYMENT_PENDING' ||
+          orderForUpdate.status === 'PROCESSING' ||
+          orderForUpdate.status === 'FULFILLING'
+        ) {
+          throw new Error('Order cannot be paid from wallet right now');
+        }
+
+        if (
+          orderForUpdate.status === 'CANCELLED' ||
+          orderForUpdate.status === 'EXPIRED' ||
+          orderForUpdate.status === 'REFUNDED'
+        ) {
+          throw new Error('Order cannot be paid');
+        }
+
+        const wallet = await tx.wallet.findUnique({ where: { userId } });
+
+        if (!wallet) {
+          throw new Error('Wallet not found');
+        }
+
+        if (wallet.currency !== order.currency) {
+          throw new Error('Wallet currency does not match order currency');
+        }
 
         const locked = await tx.$queryRaw<{ balance: Prisma.Decimal }[]>`
           SELECT balance FROM "Wallet" WHERE id = ${wallet.id}::uuid FOR UPDATE
@@ -206,20 +281,6 @@ export class CustomerWalletService {
           data: { balance: balanceAfter }
         });
 
-        await tx.walletTransaction.create({
-          data: {
-            walletId: wallet.id,
-            type: 'PURCHASE',
-            status: WalletTransactionStatus.COMPLETED,
-            amount: order.total,
-            currency: order.currency,
-            balanceBefore,
-            balanceAfter,
-            reference,
-            reason: `Purchase for order #${order.orderNumber}`
-          }
-        });
-
         const payment = await tx.payment.create({
           data: {
             orderId: order.id,
@@ -232,6 +293,21 @@ export class CustomerWalletService {
             idempotencyKey: idempotency,
             paidAt: new Date(),
             metadata: { orderId: order.id, walletPayment: true }
+          }
+        });
+
+        await tx.walletTransaction.create({
+          data: {
+            walletId: wallet.id,
+            paymentId: payment.id,
+            type: 'PURCHASE',
+            status: WalletTransactionStatus.COMPLETED,
+            amount: order.total,
+            currency: order.currency,
+            balanceBefore,
+            balanceAfter,
+            reference,
+            reason: `Purchase for order #${order.orderNumber}`
           }
         });
 
@@ -282,10 +358,94 @@ export class CustomerWalletService {
         }
       };
     } catch (error) {
+      // If the idempotency key collides with a concurrent request we treat
+      // the request as already processed instead of leaking the DB error.
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        return {
+          success: false,
+          error: 'Payment with this idempotency key already exists'
+        };
+      }
+
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to pay with wallet balance'
       };
+    }
+  }
+
+  /**
+   * Atomically refunds a wallet-funded payment: credits the buyer's wallet
+   * with a REFUND transaction that links back to the original Payment row,
+   * ensuring the buyer's money is never lost on a refund.
+   */
+  async refundDeposit(
+    payment: { id: string; amount: Prisma.Decimal; currency: string; userId: string; reference: string },
+    tx?: Prisma.TransactionClient,
+    reason?: string
+  ): Promise<void> {
+    const run = async (client: Prisma.TransactionClient): Promise<void> => {
+      const existing = await client.walletTransaction.findFirst({
+        where: { paymentId: payment.id, type: 'REFUND' }
+      });
+
+      if (existing) {
+        return;
+      }
+
+      const wallet = await client.wallet.findUnique({ where: { userId: payment.userId } });
+
+      if (!wallet) {
+        throw new Error('Wallet not found');
+      }
+
+      if (wallet.currency !== payment.currency) {
+        throw new Error('Wallet currency does not match payment currency');
+      }
+
+      const locked = await client.$queryRaw<{ balance: Prisma.Decimal }[]>`
+        SELECT balance FROM "Wallet" WHERE id = ${wallet.id}::uuid FOR UPDATE
+      `;
+
+      const balanceBefore = locked[0]?.balance ?? wallet.balance;
+      const balanceAfter = balanceBefore.plus(payment.amount);
+
+      await client.wallet.update({
+        where: { id: wallet.id },
+        data: { balance: balanceAfter }
+      });
+
+      await client.walletTransaction.create({
+        data: {
+          walletId: wallet.id,
+          paymentId: payment.id,
+          type: WalletTransactionType.REFUND,
+          status: WalletTransactionStatus.COMPLETED,
+          amount: payment.amount,
+          currency: payment.currency,
+          balanceBefore,
+          balanceAfter,
+          reference: `refund_${payment.reference}`,
+          reason: reason ?? 'Refund for order'
+        }
+      });
+    };
+
+    if (tx) {
+      await run(tx);
+      return;
+    }
+
+    try {
+      await this.prisma.$transaction(run, {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable
+      });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        return;
+      }
+
+      throw error;
     }
   }
 }

@@ -354,3 +354,190 @@ describe('ProductService deleteProduct safe-delete guard', () => {
     );
   });
 });
+
+describe('ProductService SMM service linking', () => {
+  const ACTIVE_UNLINKED = { id: 'svc-1', status: 'ACTIVE', productId: null };
+  const ACTIVE_OTHER_PRODUCT = { id: 'svc-2', status: 'ACTIVE', productId: 'product-other' };
+  const DISABLED = { id: 'svc-3', status: 'DISABLED', productId: null };
+
+  it('createProduct links active, unlinked SMM services to the new product', async () => {
+    const created = productRecord({ price: { toString: () => '4.50' } });
+    const tx = {
+      product: {
+        create: vi.fn().mockResolvedValue(created),
+        findUnique: vi.fn().mockResolvedValue(created)
+      },
+      auditLog: { create: vi.fn().mockResolvedValue({ id: 'audit-1' }) },
+      smmService: {
+        findMany: vi.fn().mockResolvedValue([ACTIVE_UNLINKED]),
+        updateMany: vi.fn()
+      }
+    };
+    const prisma = makePrismaMock(tx);
+    prisma.product.findUnique.mockResolvedValue(null);
+    const service = new ProductService(prisma as never);
+
+    await service.createProduct({ ...createInput, smmServiceIds: ['svc-1'] }, 'admin-1');
+
+    expect(tx.smmService.findMany).toHaveBeenCalledWith({
+      where: { id: { in: ['svc-1'] } }
+    });
+    expect(tx.smmService.updateMany).toHaveBeenCalledWith({
+      where: { id: { in: ['svc-1'] } },
+      data: { productId: 'product-1' }
+    });
+    expect(tx.auditLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ action: 'CREATE', newValue: expect.objectContaining({ smmServiceIds: ['svc-1'] }) })
+      })
+    );
+  });
+
+  it('createProduct rejects SMM service IDs that do not exist', async () => {
+    const tx = {
+      product: { create: vi.fn().mockResolvedValue(productRecord()), findUnique: vi.fn() },
+      auditLog: { create: vi.fn() },
+      smmService: { findMany: vi.fn().mockResolvedValue([]), updateMany: vi.fn() }
+    };
+    const prisma = makePrismaMock(tx);
+    prisma.product.findUnique.mockResolvedValue(null);
+    const service = new ProductService(prisma as never);
+
+    await expect(
+      service.createProduct({ ...createInput, smmServiceIds: ['missing'] }, 'admin-1')
+    ).rejects.toThrow('One or more SMM services do not exist');
+    expect(tx.smmService.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('createProduct rejects services already linked to another product', async () => {
+    const tx = {
+      product: { create: vi.fn().mockResolvedValue(productRecord()), findUnique: vi.fn() },
+      auditLog: { create: vi.fn() },
+      smmService: { findMany: vi.fn().mockResolvedValue([ACTIVE_OTHER_PRODUCT]), updateMany: vi.fn() }
+    };
+    const prisma = makePrismaMock(tx);
+    prisma.product.findUnique.mockResolvedValue(null);
+    const service = new ProductService(prisma as never);
+
+    await expect(
+      service.createProduct({ ...createInput, smmServiceIds: ['svc-2'] }, 'admin-1')
+    ).rejects.toThrow('Some SMM services are not available to link');
+    expect(tx.smmService.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('createProduct rejects disabled SMM services', async () => {
+    const tx = {
+      product: { create: vi.fn().mockResolvedValue(productRecord()), findUnique: vi.fn() },
+      auditLog: { create: vi.fn() },
+      smmService: { findMany: vi.fn().mockResolvedValue([DISABLED]), updateMany: vi.fn() }
+    };
+    const prisma = makePrismaMock(tx);
+    prisma.product.findUnique.mockResolvedValue(null);
+    const service = new ProductService(prisma as never);
+
+    await expect(
+      service.createProduct({ ...createInput, smmServiceIds: ['svc-3'] }, 'admin-1')
+    ).rejects.toThrow('Some SMM services are not available to link');
+    expect(tx.smmService.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('updateProduct replaces the linked services and unlinks the previous ones', async () => {
+    const updated = productRecord({ price: { toString: () => '3.00' } });
+    const tx = {
+      product: {
+        update: vi.fn().mockResolvedValue(updated),
+        findUnique: vi.fn().mockResolvedValue(updated)
+      },
+      auditLog: { create: vi.fn().mockResolvedValue({ id: 'audit-1' }) },
+      smmService: {
+        findMany: vi.fn().mockResolvedValue([{ ...ACTIVE_UNLINKED, id: 'svc-2' }]),
+        updateMany: vi.fn()
+      }
+    };
+    const prisma = makePrismaMock(tx);
+    prisma.product.findUnique.mockResolvedValueOnce(productRecord()).mockResolvedValueOnce(null);
+    const service = new ProductService(prisma as never);
+
+    await service.updateProduct('product-1', { name: 'Renamed', smmServiceIds: ['svc-2'] }, 'admin-1');
+
+    expect(tx.smmService.updateMany).toHaveBeenNthCalledWith(1, {
+      where: { productId: 'product-1' },
+      data: { productId: null }
+    });
+    expect(tx.smmService.updateMany).toHaveBeenNthCalledWith(2, {
+      where: { id: { in: ['svc-2'] } },
+      data: { productId: 'product-1' }
+    });
+  });
+
+  it('updateProduct with an empty array unlinks every service and links none', async () => {
+    const updated = productRecord({ price: { toString: () => '3.00' } });
+    const tx = {
+      product: {
+        update: vi.fn().mockResolvedValue(updated),
+        findUnique: vi.fn().mockResolvedValue(updated)
+      },
+      auditLog: { create: vi.fn().mockResolvedValue({ id: 'audit-1' }) },
+      smmService: { findMany: vi.fn(), updateMany: vi.fn() }
+    };
+    const prisma = makePrismaMock(tx);
+    prisma.product.findUnique.mockResolvedValueOnce(productRecord()).mockResolvedValueOnce(null);
+    const service = new ProductService(prisma as never);
+
+    await service.updateProduct('product-1', { name: 'Renamed', smmServiceIds: [] }, 'admin-1');
+
+    expect(tx.smmService.updateMany).toHaveBeenCalledTimes(1);
+    expect(tx.smmService.updateMany).toHaveBeenCalledWith({
+      where: { productId: 'product-1' },
+      data: { productId: null }
+    });
+    expect(tx.smmService.findMany).not.toHaveBeenCalled();
+  });
+
+  it('updateProduct without smmServiceIds leaves existing links untouched', async () => {
+    const updated = productRecord({ price: { toString: () => '3.00' } });
+    const tx = {
+      product: {
+        update: vi.fn().mockResolvedValue(updated),
+        findUnique: vi.fn().mockResolvedValue(updated)
+      },
+      auditLog: { create: vi.fn().mockResolvedValue({ id: 'audit-1' }) },
+      smmService: { findMany: vi.fn(), updateMany: vi.fn() }
+    };
+    const prisma = makePrismaMock(tx);
+    prisma.product.findUnique.mockResolvedValueOnce(productRecord()).mockResolvedValueOnce(null);
+    const service = new ProductService(prisma as never);
+
+    await service.updateProduct('product-1', { name: 'Renamed' }, 'admin-1');
+
+    expect(tx.smmService.updateMany).not.toHaveBeenCalled();
+    expect(tx.smmService.findMany).not.toHaveBeenCalled();
+  });
+
+  it('getProductById returns the linked SMM services with their provider', async () => {
+    const withServices = productRecord({
+      smmServices: [
+        {
+          id: 'svc-1',
+          providerId: 'provider-1',
+          providerServiceId: '9001',
+          name: 'FB Followers',
+          status: 'ACTIVE',
+          provider: { id: 'provider-1', name: 'SMM Panel' }
+        }
+      ]
+    });
+    const prisma = makePrismaMock({});
+    prisma.product.findUnique.mockResolvedValue(withServices);
+    const service = new ProductService(prisma as never);
+
+    const result = await service.getProductById('product-1');
+
+    expect(result?.smmServices).toEqual([
+      expect.objectContaining({ id: 'svc-1', name: 'FB Followers', providerServiceId: '9001' })
+    ]);
+    expect(prisma.product.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ include: expect.objectContaining({ smmServices: expect.anything() }) })
+    );
+  });
+});

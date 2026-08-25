@@ -1,13 +1,23 @@
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import Script from 'next/script';
 import './globals.css';
 import { TelegramProvider } from '@/components/TelegramProvider';
 import { ThemeProvider } from '@/components/ThemeProvider';
+import { I18nProvider } from '@/lib/i18n';
 import { BottomNav } from '@/components/BottomNav';
+import { ToastHost } from '@/components/Toast';
 
 export const metadata: Metadata = {
   title: 'JR Digital license',
   description: 'Digital products and services in Telegram'
+};
+
+// viewport-fit=cover is required for env(safe-area-inset-*) to resolve
+// inside the Telegram WebView on notched devices.
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  viewportFit: 'cover'
 };
 
 const themeScript = `
@@ -30,10 +40,13 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
       </head>
       <body>
         <ThemeProvider>
-          <TelegramProvider>
-            {children}
-            <BottomNav />
-          </TelegramProvider>
+          <I18nProvider>
+            <TelegramProvider>
+              {children}
+              <ToastHost />
+              <BottomNav />
+            </TelegramProvider>
+          </I18nProvider>
         </ThemeProvider>
       </body>
     </html>

@@ -8,6 +8,7 @@ export { AdminWalletService } from './wallet.service.js';
 export { AdminTicketService } from './ticket.service.js';
 export { AdminSettingsService } from './settings.service.js';
 export { AdminPaymentService } from './payment.service.js';
+export { AdminTopUpService } from './topup.service.js';
 export type { CreateProductInput, UpdateProductInput } from './product.service.js';
 export type { CreateCategoryInput, UpdateCategoryInput } from './category.service.js';
 export type { OrderFilters } from './order.service.js';

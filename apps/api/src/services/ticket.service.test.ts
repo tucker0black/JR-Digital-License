@@ -1,6 +1,22 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PrismaClient } from '@prisma/client';
 import { CustomerTicketService } from './ticket.service.js';
+import type { SupportAvailabilityService } from './support-hours.service.js';
+
+function makeSupportHours(isOpen = true): SupportAvailabilityService {
+  return {
+    isOpen: () => isOpen,
+    getAvailability: () => ({
+      isOpen,
+      openTime: '08:00',
+      closeTime: '20:00',
+      timezoneLabel: 'UTC+07:00',
+      serverTime: new Date().toISOString()
+    }),
+    buildBlockedMessage: () =>
+      'Support is currently offline (08:00–20:00 UTC+07:00). You can send one message and our team will reply when support opens.'
+  } as SupportAvailabilityService;
+}
 
 function makeMockPrisma() {
   const prisma = {
@@ -11,7 +27,8 @@ function makeMockPrisma() {
       findUnique: vi.fn(),
       findMany: vi.fn(),
       count: vi.fn(),
-      update: vi.fn()
+      update: vi.fn(),
+      findFirst: vi.fn()
     },
     supportMessage: {
       create: vi.fn(),
@@ -32,6 +49,7 @@ function makeMockPrisma() {
       findMany: ReturnType<typeof vi.fn>;
       count: ReturnType<typeof vi.fn>;
       update: ReturnType<typeof vi.fn>;
+      findFirst: ReturnType<typeof vi.fn>;
     };
     supportMessage: { create: ReturnType<typeof vi.fn>; count: ReturnType<typeof vi.fn>; updateMany: ReturnType<typeof vi.fn> };
     user: { findUnique: ReturnType<typeof vi.fn> };
@@ -76,7 +94,7 @@ describe('CustomerTicketService', () => {
       createdAt: new Date()
     });
     prisma.supportMessage.count.mockResolvedValue(0);
-    service = new CustomerTicketService(prisma);
+    service = new CustomerTicketService(prisma, makeSupportHours());
   });
 
   afterEach(() => {
@@ -327,6 +345,89 @@ describe('CustomerTicketService', () => {
       expect.objectContaining({
         where: expect.objectContaining({ customerReadAt: null })
       })
+    );
+  });
+});
+
+describe('CustomerTicketService working hours', () => {
+  let prisma: ReturnType<typeof makeMockPrisma>;
+  let service: CustomerTicketService;
+
+  beforeEach(() => {
+    prisma = makeMockPrisma();
+    prisma.user.findUnique.mockResolvedValue({ firstName: 'John', lastName: 'Doe', username: 'johndoe' });
+    prisma.supportTicket.create.mockResolvedValue({ id: 'ticket-1', number: 5, userId: 'user-1', status: 'OPEN', createdAt: new Date(), updatedAt: new Date() });
+    prisma.supportTicket.findUnique.mockResolvedValue({ id: 'ticket-1', number: 5, userId: 'user-1', status: 'OPEN', createdAt: new Date(), updatedAt: new Date() });
+    prisma.supportTicket.update.mockResolvedValue({ id: 'ticket-1', status: 'OPEN' });
+    prisma.supportMessage.create.mockResolvedValue({
+      id: 'msg-1',
+      ticketId: 'ticket-1',
+      sender: 'USER',
+      body: 'Help',
+      createdAt: new Date()
+    });
+    prisma.supportMessage.count.mockResolvedValue(0);
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('blocks a new ticket outside hours when the customer already has an unanswered message', async () => {
+    service = new CustomerTicketService(prisma, makeSupportHours(false));
+    prisma.supportTicket.findFirst.mockResolvedValue({ id: 'ticket-1' });
+
+    await expect(service.createTicket('user-1', 'Problem', 'Help me')).rejects.toThrow(
+      'Support is currently offline'
+    );
+    expect(prisma.supportTicket.create).not.toHaveBeenCalled();
+  });
+
+  it('allows a new ticket outside hours when the customer has no unanswered message', async () => {
+    service = new CustomerTicketService(prisma, makeSupportHours(false));
+    prisma.supportTicket.findFirst.mockResolvedValue(null);
+
+    const ticket = await service.createTicket('user-1', 'Problem', 'Help me');
+
+    expect(ticket.id).toBe('ticket-1');
+  });
+
+  it('blocks an outside-hours reply to a ticket with an unanswered customer message', async () => {
+    service = new CustomerTicketService(prisma, makeSupportHours(false));
+    prisma.supportMessage.count
+      .mockResolvedValueOnce(0)
+      .mockResolvedValueOnce(1);
+
+    await expect(service.replyToTicket('ticket-1', 'user-1', 'More details')).rejects.toThrow(
+      'Support is currently offline'
+    );
+  });
+
+  it('allows an outside-hours reply once an admin has answered', async () => {
+    service = new CustomerTicketService(prisma, makeSupportHours(false));
+    prisma.supportMessage.count
+      .mockResolvedValueOnce(1)
+      .mockResolvedValueOnce(1);
+    prisma.supportMessage.create.mockResolvedValue({ id: 'msg-2', sender: 'USER', body: 'More details', createdAt: new Date() });
+    prisma.supportTicket.update.mockResolvedValue({ id: 'ticket-1', status: 'OPEN' });
+
+    const result = await service.replyToTicket('ticket-1', 'user-1', 'More details');
+
+    expect(result.sender).toBe('USER');
+  });
+
+  it('does not run enforcement queries while support is open', async () => {
+    service = new CustomerTicketService(prisma, makeSupportHours(true));
+
+    await service.createTicket('user-1', 'Problem', 'Help me');
+    await service.replyToTicket('ticket-1', 'user-1', 'More details');
+
+    expect(prisma.supportTicket.findFirst).not.toHaveBeenCalled();
+    expect(prisma.supportMessage.count).not.toHaveBeenCalledWith(
+      expect.objectContaining({ where: { ticketId: 'ticket-1', sender: 'USER' } })
+    );
+    expect(prisma.supportMessage.count).not.toHaveBeenCalledWith(
+      expect.objectContaining({ where: { ticketId: 'ticket-1', sender: 'ADMIN' } })
     );
   });
 });

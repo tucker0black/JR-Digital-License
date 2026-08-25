@@ -1,4 +1,4 @@
-import { botCommands, createBot } from './bot.js';
+import { botCommands, botCommandsKm, createBot } from './bot.js';
 import { loadBotConfig } from './config.js';
 
 const MENU_BUTTON_TEXT = '🛍 Open Mini App';
@@ -26,6 +26,12 @@ async function start(): Promise<void> {
   process.once('SIGTERM', () => bot.stop());
 
   await bot.api.setMyCommands(botCommands);
+  // Khmer command descriptions for Telegram clients set to Khmer.
+  try {
+    await bot.api.setMyCommands(botCommandsKm, { language_code: 'km' });
+  } catch (error) {
+    console.warn('Failed to register Khmer command descriptions.', error);
+  }
   await configureMenuButton(bot, config.miniAppUrl);
   await bot.start({
     allowed_updates: ['message', 'callback_query'],

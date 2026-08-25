@@ -38,10 +38,10 @@ export default function AdminLoginPage() {
   };
 
   return (
-    <div className="dark flex min-h-screen items-center justify-center bg-page px-4">
-      <div className="w-full max-w-sm rounded-xl border border-slate-800 bg-card p-6">
-        <h1 className="text-lg font-semibold text-slate-100">JR Digital license</h1>
-        <p className="mt-1 text-sm text-slate-400">Admin Dashboard</p>
+    <div className="flex min-h-screen items-center justify-center bg-page bg-cosmic px-4">
+      <div className="w-full max-w-sm rounded-2xl border border-line/50 bg-card p-6 shadow-lg">
+        <h1 className="text-lg font-bold tracking-premium text-ink">JR Digital license</h1>
+        <p className="mt-1 text-sm text-primary font-medium">Admin Dashboard</p>
         <form onSubmit={handleSubmit} className="mt-6 space-y-4">
           <Field label="Admin token" hint="Provided when the admin account was created.">
             <Input
@@ -53,9 +53,9 @@ export default function AdminLoginPage() {
               required
             />
           </Field>
-          {error && <p className="text-sm text-red-400">{error}</p>}
+          {error && <p className="text-sm text-danger">{error}</p>}
           <Button type="submit" disabled={loading || !token.trim()} className="w-full">
-            {loading ? 'Verifying…' : 'Sign in'}
+            {loading ? 'Verifying\u2026' : 'Sign in'}
           </Button>
         </form>
       </div>

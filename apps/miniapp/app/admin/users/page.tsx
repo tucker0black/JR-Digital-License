@@ -43,7 +43,7 @@ export default function AdminUsersPage() {
 
       <div className="mb-4 grid gap-3 sm:grid-cols-2">
         <Input
-          placeholder="Search name, username or Telegram ID…"
+          placeholder="Search name, username, Telegram ID or customer ID…"
           value={search}
           onChange={(e) => { setSearch(e.target.value); setPage(1); }}
         />
@@ -58,7 +58,7 @@ export default function AdminUsersPage() {
       <Card>
         {users.data && users.data.users.length > 0 ? (
           <>
-            <Table headers={['User', 'Telegram ID', 'Status', 'Last seen', 'Actions']}>
+            <Table headers={['User', 'Customer ID', 'Status', 'Last seen', 'Actions']}>
               {users.data.users.map((user) => (
                 <tr key={user.id}>
                   <td className="px-3 py-2">
@@ -67,7 +67,10 @@ export default function AdminUsersPage() {
                     </p>
                     <p className="text-xs text-slate-500">{user.username ? `@${user.username}` : 'no username'}</p>
                   </td>
-                  <td className="px-3 py-2 text-slate-300">{user.telegramId}</td>
+                  <td className="px-3 py-2">
+                    <p className="text-slate-300">{user.customerId}</p>
+                    <p className="text-xs text-slate-500">{user.telegramId}</p>
+                  </td>
                   <td className="px-3 py-2"><StatusBadge status={user.status} /></td>
                   <td className="px-3 py-2 text-slate-400">{formatDate(user.lastSeenAt)}</td>
                   <td className="px-3 py-2">
@@ -108,6 +111,9 @@ function UserDetailCard({ user }: { user: UserDetail }) {
       <div className="grid gap-3 sm:grid-cols-3">
         <Field label="Internal customer ID">
           <p className="break-all text-sm text-slate-200">{user.id}</p>
+        </Field>
+        <Field label="Customer ID">
+          <p className="text-sm text-slate-200">{user.customerId}</p>
         </Field>
         <Field label="Telegram ID">
           <p className="text-sm text-slate-200">{user.telegramId}</p>

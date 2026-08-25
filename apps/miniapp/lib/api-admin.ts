@@ -6,11 +6,13 @@ import type {
   AuditLogEntry,
   CategoryDetail,
   CreateCategoryRequest,
+  CreateFlashDealRequest,
   CreateNotificationTargetRequest,
   CreateProductRequest,
   CreateSmmProviderRequest,
   CreateSmmServiceRequest,
   DashboardStats,
+  FavoriteDetail,
   NotificationTarget,
   OrderDetail,
   ProductDetail,
@@ -19,6 +21,7 @@ import type {
   Ticket,
   TicketDetail,
   UpdateCategoryRequest,
+  UpdateFlashDealRequest,
   UpdateNotificationTargetRequest,
   UpdateProductRequest,
   UpdateSmmProviderRequest,
@@ -159,6 +162,12 @@ export async function adminLogin(token: string, storage?: AdminTokenStorage): Pr
 
 export function adminLogout(): void {
   clearAdminToken();
+}
+
+// ---------- Auth check ----------
+
+export function checkAdminAuth(): Promise<{ ok: boolean }> {
+  return adminFetch<{ ok: boolean }>('/api/admin/auth/check');
 }
 
 // ---------- Dashboard ----------
@@ -331,6 +340,631 @@ export function reorderAdminCategories(orders: { id: string; sortOrder: number }
   });
 }
 
+// ---------- Owned media uploads (permanent image storage) ----------
+
+export interface AdminMediaAsset {
+  id: string;
+  filename: string;
+  /** Stable, origin-agnostic URL — safe to store on any record. */
+  url: string;
+  mimeType: string;
+  sizeBytes: number;
+}
+
+/**
+ * Upload an image to PERMANENT application-owned storage. The returned URL
+ * is stored verbatim in the record's imageUrl; the asset never expires and is
+ * never removed automatically.
+ */
+export function uploadAdminMedia(dataBase64: string): Promise<{ asset: AdminMediaAsset }> {
+  return adminFetch<{ asset: AdminMediaAsset }>('/api/admin/media', {
+    method: 'POST',
+    body: JSON.stringify({ dataBase64 })
+  });
+}
+
+// ---------- Banners ----------
+
+export interface AdminBanner {
+  id: string;
+  title: string;
+  subtitle: string | null;
+  imageUrl: string | null;
+  buttonText: string | null;
+  buttonDestination: string | null;
+  targetType: string;
+  targetCategoryId: string | null;
+  targetProductId: string | null;
+  targetPage: string | null;
+  isActive: boolean;
+  sortOrder: number;
+  startsAt: string | null;
+  endsAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  targetCategory: { id: string; name: string; slug: string } | null;
+  targetProduct: { id: string; name: string; slug: string } | null;
+}
+
+export interface AdminBannersResponse {
+  banners: AdminBanner[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export interface AdminBannerFilters {
+  search?: string;
+  isActive?: string;
+  targetType?: string;
+  page?: number;
+  pageSize?: number;
+}
+
+export function getAdminBanners(filters: AdminBannerFilters = {}): Promise<AdminBannersResponse> {
+  return adminFetch<AdminBannersResponse>(`/api/admin/banners${buildQuery(filters)}`);
+}
+
+export function getAdminBanner(id: string): Promise<{ banner: AdminBanner }> {
+  return adminFetch<{ banner: AdminBanner }>(`/api/admin/banners/${id}`);
+}
+
+export function createAdminBanner(data: {
+  title: string;
+  subtitle?: string;
+  imageUrl?: string;
+  buttonText?: string;
+  buttonDestination?: string;
+  targetType?: string;
+  targetCategoryId?: string;
+  targetProductId?: string;
+  targetPage?: string;
+  isActive?: boolean;
+  sortOrder?: number;
+  startsAt?: string;
+  endsAt?: string;
+}): Promise<{ banner: AdminBanner }> {
+  return adminFetch<{ banner: AdminBanner }>('/api/admin/banners', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+export function updateAdminBanner(id: string, data: Record<string, unknown>): Promise<{ banner: AdminBanner }> {
+  return adminFetch<{ banner: AdminBanner }>(`/api/admin/banners/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(data)
+  });
+}
+
+export function deleteAdminBanner(id: string): Promise<{ success: boolean }> {
+  return adminFetch<{ success: boolean }>(`/api/admin/banners/${id}`, { method: 'DELETE' });
+}
+
+export function activateAdminBanner(id: string): Promise<{ banner: AdminBanner }> {
+  return adminFetch<{ banner: AdminBanner }>(`/api/admin/banners/${id}/activate`, { method: 'POST' });
+}
+
+export function deactivateAdminBanner(id: string): Promise<{ banner: AdminBanner }> {
+  return adminFetch<{ banner: AdminBanner }>(`/api/admin/banners/${id}/deactivate`, { method: 'POST' });
+}
+
+export function reorderAdminBanners(orders: { id: string; sortOrder: number }[]): Promise<{ success: boolean }> {
+  return adminFetch<{ success: boolean }>('/api/admin/banners/reorder', {
+    method: 'POST',
+    body: JSON.stringify(orders)
+  });
+}
+
+// ---------- Flash Deals ----------
+
+export interface AdminFlashDeal {
+  id: string;
+  productId: string;
+  discountType: string;
+  discountValue: string;
+  salePrice: string;
+  isActive: boolean;
+  sortOrder: number;
+  startsAt: string | null;
+  endsAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  product: {
+    id: string;
+    name: string;
+    slug: string;
+    price: string;
+    currency: string;
+    imageUrl: string | null;
+    deliveryType: string;
+    status: string;
+    category: { id: string; name: string; slug: string } | null;
+  };
+}
+
+export interface AdminFlashDealsResponse {
+  deals: AdminFlashDeal[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export interface AdminFlashDealFilters {
+  search?: string;
+  isActive?: string;
+  page?: number;
+  pageSize?: number;
+}
+
+export function getAdminFlashDeals(filters: AdminFlashDealFilters = {}): Promise<AdminFlashDealsResponse> {
+  return adminFetch<AdminFlashDealsResponse>(`/api/admin/flash-deals${buildQuery(filters)}`);
+}
+
+export function getAdminFlashDeal(id: string): Promise<{ deal: AdminFlashDeal }> {
+  return adminFetch<{ deal: AdminFlashDeal }>(`/api/admin/flash-deals/${id}`);
+}
+
+export function createAdminFlashDeal(data: CreateFlashDealRequest): Promise<{ deal: AdminFlashDeal }> {
+  return adminFetch<{ deal: AdminFlashDeal }>('/api/admin/flash-deals', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+export function updateAdminFlashDeal(id: string, data: UpdateFlashDealRequest): Promise<{ deal: AdminFlashDeal }> {
+  return adminFetch<{ deal: AdminFlashDeal }>(`/api/admin/flash-deals/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(data)
+  });
+}
+
+export function deleteAdminFlashDeal(id: string): Promise<{ success: boolean }> {
+  return adminFetch<{ success: boolean }>(`/api/admin/flash-deals/${id}`, { method: 'DELETE' });
+}
+
+export function activateAdminFlashDeal(id: string): Promise<{ deal: AdminFlashDeal }> {
+  return adminFetch<{ deal: AdminFlashDeal }>(`/api/admin/flash-deals/${id}/activate`, { method: 'POST' });
+}
+
+export function deactivateAdminFlashDeal(id: string): Promise<{ deal: AdminFlashDeal }> {
+  return adminFetch<{ deal: AdminFlashDeal }>(`/api/admin/flash-deals/${id}/deactivate`, { method: 'POST' });
+}
+
+// ---------- Favorites ----------
+
+export function getAdminFavorites(params: { userId?: string; page?: number; pageSize?: number } = {}): Promise<{ favorites: FavoriteDetail[]; total: number; page: number; pageSize: number }> {
+  return adminFetch(`/api/favorites${buildQuery(params)}`);
+}
+
+// ---------- Top-Up Packages ----------
+
+export interface AdminTopUpProvider {
+  id: string;
+  name: string;
+  apiUrl: string;
+  status: 'ACTIVE' | 'DISABLED';
+  packageCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AdminTopUpPackage {
+  id: string;
+  gameId: string;
+  game: string;
+  name: string;
+  diamondAmount: number;
+  content: string | null;
+  price: string;
+  currency: string;
+  providerId: string | null;
+  providerServiceId: string | null;
+  providerOfferId?: string | null;
+  providerCost: string | null;
+  isActive: boolean;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+  provider: { id: string; name: string; status: string } | null;
+  icon?: string | null;
+  imageUrl?: string | null;
+  customerNote?: string | null;
+  noteColor?: 'WARNING' | 'INFO' | 'SUCCESS' | 'DANGER' | 'PURPLE';
+}
+
+export interface AdminTopUpPackagesResponse {
+  packages: AdminTopUpPackage[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export interface AdminTopUpPackageFilters {
+  search?: string;
+  game?: string;
+  isActive?: string;
+  page?: number;
+  pageSize?: number;
+}
+
+export function getAdminTopUpPackages(filters: AdminTopUpPackageFilters = {}): Promise<AdminTopUpPackagesResponse> {
+  return adminFetch<AdminTopUpPackagesResponse>(`/api/admin/topup/packages${buildQuery(filters)}`);
+}
+
+export function getAdminTopUpGames(): Promise<{ games: AdminTopUpGame[] }> {
+  return adminFetch<{ games: AdminTopUpGame[] }>('/api/admin/topup/games');
+}
+
+export interface AdminTopUpGame {
+  id: string;
+  name: string;
+  imageUrl: string | null;
+  providerId: string | null;
+  providerServiceId: string | null;
+  isActive: boolean;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+  provider: { id: string; name: string; status: string } | null;
+  packageCount: number;
+}
+
+export function createAdminTopUpGame(data: {
+  name: string;
+  imageUrl?: string | null;
+  providerId?: string | null;
+  providerServiceId?: string;
+  isActive?: boolean;
+  sortOrder?: number;
+}): Promise<{ game: AdminTopUpGame }> {
+  return adminFetch<{ game: AdminTopUpGame }>('/api/admin/topup/games', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+export function updateAdminTopUpGame(
+  id: string,
+  data: {
+    name?: string;
+    imageUrl?: string | null;
+    providerId?: string | null;
+    providerServiceId?: string;
+    isActive?: boolean;
+    sortOrder?: number;
+  }
+): Promise<{ game: AdminTopUpGame }> {
+  return adminFetch<{ game: AdminTopUpGame }>(`/api/admin/topup/games/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(data)
+  });
+}
+
+export function setAdminTopUpGameStatus(id: string, isActive: boolean): Promise<{ game: AdminTopUpGame }> {
+  return adminFetch<{ game: AdminTopUpGame }>(`/api/admin/topup/games/${id}/status`, {
+    method: 'POST',
+    body: JSON.stringify({ isActive })
+  });
+}
+
+export function deleteAdminTopUpGame(id: string): Promise<{ success: boolean }> {
+  return adminFetch<{ success: boolean }>(`/api/admin/topup/games/${id}`, { method: 'DELETE' });
+}
+
+export function createAdminTopUpPackage(data: {
+  gameId: string;
+  name: string;
+  diamondAmount?: number;
+  content?: string | null;
+  price: string;
+  currency?: string;
+  providerCost?: string | number | null;
+  providerOfferId?: string | null;
+  isActive?: boolean;
+  sortOrder?: number;
+  icon?: string | null;
+  imageUrl?: string | null;
+  customerNote?: string | null;
+  noteColor?: 'WARNING' | 'INFO' | 'SUCCESS' | 'DANGER' | 'PURPLE';
+}): Promise<{ pkg: AdminTopUpPackage }> {
+  return adminFetch<{ pkg: AdminTopUpPackage }>('/api/admin/topup/packages', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+export function updateAdminTopUpPackage(
+  id: string,
+  data: {
+    gameId?: string;
+    name?: string;
+    diamondAmount?: number;
+    content?: string | null;
+    price?: string;
+    currency?: string;
+    providerCost?: string | number | null;
+    providerOfferId?: string | null;
+    isActive?: boolean;
+    sortOrder?: number;
+    icon?: string | null;
+    imageUrl?: string | null;
+    customerNote?: string | null;
+    noteColor?: 'WARNING' | 'INFO' | 'SUCCESS' | 'DANGER' | 'PURPLE';
+  }
+): Promise<{ pkg: AdminTopUpPackage }> {
+  return adminFetch<{ pkg: AdminTopUpPackage }>(`/api/admin/topup/packages/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(data)
+  });
+}
+
+export function setAdminTopUpPackageStatus(id: string, isActive: boolean): Promise<{ pkg: AdminTopUpPackage }> {
+  return adminFetch<{ pkg: AdminTopUpPackage }>(`/api/admin/topup/packages/${id}/status`, {
+    method: 'POST',
+    body: JSON.stringify({ isActive })
+  });
+}
+
+/**
+ * Link an existing package to an EXTERNAL provider offer and snapshot the
+ * provider cost. Selling price, name and status are never touched by this
+ * call — those stay explicit admin actions.
+ */
+export function linkAdminTopUpPackageOffer(id: string, data: {
+  providerOfferId?: string | null;
+  providerCost?: string | number | null;
+}): Promise<{ pkg: AdminTopUpPackage }> {
+  return adminFetch<{ pkg: AdminTopUpPackage }>(`/api/admin/topup/packages/${id}/link-offer`, {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+export function deleteAdminTopUpPackage(id: string): Promise<{ success: boolean }> {
+  return adminFetch<{ success: boolean }>(`/api/admin/topup/packages/${id}`, { method: 'DELETE' });
+}
+
+// ---------- Top-Up Providers ----------
+
+export function getAdminTopUpProviders(): Promise<{ providers: AdminTopUpProvider[] }> {
+  return adminFetch<{ providers: AdminTopUpProvider[] }>('/api/admin/topup/providers');
+}
+
+export function createAdminTopUpProvider(data: {
+  name: string;
+  apiUrl: string;
+  apiKey: string;
+}): Promise<{ provider: AdminTopUpProvider }> {
+  return adminFetch<{ provider: AdminTopUpProvider }>('/api/admin/topup/providers', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+export function updateAdminTopUpProvider(
+  id: string,
+  data: {
+    name?: string;
+    apiUrl?: string;
+    apiKey?: string;
+    status?: 'ACTIVE' | 'DISABLED';
+  }
+): Promise<{ provider: AdminTopUpProvider }> {
+  return adminFetch<{ provider: AdminTopUpProvider }>(`/api/admin/topup/providers/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(data)
+  });
+}
+
+export function setAdminTopUpProviderStatus(id: string, status: 'ACTIVE' | 'DISABLED'): Promise<{ provider: AdminTopUpProvider }> {
+  return adminFetch<{ provider: AdminTopUpProvider }>(`/api/admin/topup/providers/${id}/status`, {
+    method: 'POST',
+    body: JSON.stringify({ status })
+  });
+}
+
+export function testAdminTopUpProvider(id: string): Promise<{ success: boolean; error?: string; balance?: number; currency?: string }> {
+  return adminFetch<{ success: boolean; error?: string }>(`/api/admin/topup/providers/${id}/test`, {
+    method: 'POST'
+  });
+}
+
+export function deleteAdminTopUpProvider(id: string): Promise<{ success: boolean }> {
+  return adminFetch<{ success: boolean }>(`/api/admin/topup/providers/${id}`, { method: 'DELETE' });
+}
+
+// ---------- Top-Up Provider Services ----------
+
+export interface AdminTopUpProviderService {
+  id: string;
+  providerId: string;
+  providerServiceId: string;
+  name: string;
+  status: 'ACTIVE' | 'DISABLED';
+  createdAt: string;
+  updatedAt: string;
+  provider: { id: string; name: string; status: string } | null;
+  gameCount: number;
+  packageCount: number;
+}
+
+export interface AdminTopUpProviderServicesResponse {
+  services: AdminTopUpProviderService[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export interface AdminTopUpProviderServiceFilters {
+  providerId?: string;
+  search?: string;
+  isActive?: string;
+  page?: number;
+  pageSize?: number;
+}
+
+export function getAdminTopUpProviderServices(filters: AdminTopUpProviderServiceFilters = {}): Promise<AdminTopUpProviderServicesResponse> {
+  return adminFetch<AdminTopUpProviderServicesResponse>(`/api/admin/topup/provider-services${buildQuery(filters)}`);
+}
+
+export function createAdminTopUpProviderService(data: {
+  providerId: string;
+  providerServiceId: string;
+  name: string;
+  status?: 'ACTIVE' | 'DISABLED';
+}): Promise<{ service: AdminTopUpProviderService }> {
+  return adminFetch<{ service: AdminTopUpProviderService }>('/api/admin/topup/provider-services', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+export function updateAdminTopUpProviderService(
+  id: string,
+  data: {
+    providerServiceId?: string;
+    name?: string;
+    status?: 'ACTIVE' | 'DISABLED';
+  }
+): Promise<{ service: AdminTopUpProviderService }> {
+  return adminFetch<{ service: AdminTopUpProviderService }>(`/api/admin/topup/provider-services/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(data)
+  });
+}
+
+export function setAdminTopUpProviderServiceStatus(id: string, status: 'ACTIVE' | 'DISABLED'): Promise<{ service: AdminTopUpProviderService }> {
+  return adminFetch<{ service: AdminTopUpProviderService }>(`/api/admin/topup/provider-services/${id}/status`, {
+    method: 'POST',
+    body: JSON.stringify({ status })
+  });
+}
+
+export function deleteAdminTopUpProviderService(id: string): Promise<{ success: boolean }> {
+  return adminFetch<{ success: boolean }>(`/api/admin/topup/provider-services/${id}`, { method: 'DELETE' });
+}
+
+// ---------- Top-Up Remote Catalog Fetch ----------
+
+export interface RemoteProviderCategory {
+  category_id: string;
+  name: string;
+  note: string | null;
+  region: string | null;
+}
+
+export interface RemoteProviderOfferField {
+  key: string;
+  label: string;
+  type?: string;
+}
+
+export interface RemoteProviderOffer {
+  offer_id: string;
+  offer_name: string;
+  price_usd: number;
+}
+
+export interface RemoteProviderOffersResult {
+  offers: RemoteProviderOffer[];
+  fields: RemoteProviderOfferField[];
+  note: string | null;
+  categoryName: string | null;
+  externalCategoryId: string;
+}
+
+export interface RemoteCatalogWarning {
+  id: string;
+  name: string;
+  providerServiceId: string;
+}
+
+export interface RemoteProviderCategoriesResult {
+  categories: RemoteProviderCategory[];
+  total: number;
+  warnings: RemoteCatalogWarning[];
+}
+
+export function fetchRemoteProviderCategories(providerId: string): Promise<RemoteProviderCategoriesResult> {
+  return adminFetch<RemoteProviderCategoriesResult>(`/api/admin/topup/providers/${providerId}/categories`);
+}
+
+export function fetchRemoteProviderOffers(providerId: string, categoryId: string): Promise<RemoteProviderOffersResult> {
+  return adminFetch<RemoteProviderOffersResult>(`/api/admin/topup/providers/${providerId}/categories/${encodeURIComponent(categoryId)}/offers`);
+}
+
+// ---------- Top-Up Game Input Configuration ----------
+
+export interface AdminTopUpCustomField {
+  key: string;
+  label: string;
+  required: boolean;
+  placeholder?: string;
+}
+
+export interface AdminTopUpGameConfig {
+  id: string;
+  game: string;
+  requirePlayerId: boolean;
+  requireServerId: boolean;
+  playerIdValidation: 'NUMERIC' | 'TEXT';
+  serverIdValidation: 'NUMERIC' | 'TEXT';
+  verificationEnabled: boolean;
+  allowUnverifiedPurchase?: boolean;
+  verificationProviderId: string | null;
+  verificationServiceId: string | null;
+  customerNote: string | null;
+  customFields: AdminTopUpCustomField[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export function getAdminTopUpGameConfigs(): Promise<{ configs: AdminTopUpGameConfig[] }> {
+  return adminFetch<{ configs: AdminTopUpGameConfig[] }>('/api/admin/topup/game-configs');
+}
+
+/** Live provider metadata: categories that currently support ID validation. */
+export interface AdminValidationSupportCategory {
+  categoryId: string;
+  name: string;
+  fields: Array<{ key: string; label: string; type?: string }>;
+}
+
+export function getAdminTopUpValidationSupport(providerId?: string): Promise<{
+  providerId: string | null;
+  categories: AdminValidationSupportCategory[];
+  total: number;
+}> {
+  const query = providerId ? `?providerId=${encodeURIComponent(providerId)}` : '';
+  return adminFetch(`/api/admin/topup/validation-support${query}`);
+}
+
+export function upsertAdminTopUpGameConfig(data: {
+  gameId: string;
+  requirePlayerId?: boolean;
+  requireServerId?: boolean;
+  playerIdValidation?: 'NUMERIC' | 'TEXT';
+  serverIdValidation?: 'NUMERIC' | 'TEXT';
+  verificationEnabled?: boolean;
+  allowUnverifiedPurchase?: boolean;
+  verificationProviderId?: string | null;
+  verificationServiceId?: string | null;
+  customerNote?: string | null;
+  customFields?: AdminTopUpCustomField[] | null;
+}): Promise<{ config: AdminTopUpGameConfig }> {
+  return adminFetch<{ config: AdminTopUpGameConfig }>('/api/admin/topup/game-configs', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+export function deleteAdminTopUpGameConfig(gameId: string): Promise<{ success: boolean }> {
+  return adminFetch<{ success: boolean }>(`/api/admin/topup/game-configs/${encodeURIComponent(gameId)}`, {
+    method: 'DELETE'
+  });
+}
+
 // ---------- Orders ----------
 
 export interface AdminOrdersResponse {
@@ -345,6 +979,7 @@ export interface AdminOrderFilters {
   userId?: string;
   status?: string;
   paymentStatus?: string;
+  deliveryType?: string;
   dateFrom?: string;
   dateTo?: string;
   page?: number;
@@ -357,8 +992,27 @@ export function getAdminOrders(filters: AdminOrderFilters = {}): Promise<AdminOr
   return adminFetch<AdminOrdersResponse>(`/api/admin/orders${buildQuery(filters)}`);
 }
 
-export function getAdminOrder(id: string): Promise<{ order: OrderDetail }> {
-  return adminFetch<{ order: OrderDetail }>(`/api/admin/orders/${id}`);
+export function getAdminOrder(id: string): Promise<OrderDetail> {
+  return adminFetch<OrderDetail>(`/api/admin/orders/${id}`);
+}
+
+export interface AdminPaymentRecheckResult {
+  success: boolean;
+  status: string;
+  providerTransactionHash: string | null;
+  providerReference: string | null;
+  paidAt: string | null;
+  error: string | null;
+  fulfillment: {
+    success: boolean;
+    errors: unknown[];
+  } | null;
+}
+
+export function recheckAdminPayment(id: string): Promise<AdminPaymentRecheckResult> {
+  return adminFetch<AdminPaymentRecheckResult>(`/api/admin/payments/${id}/recheck`, {
+    method: 'POST'
+  });
 }
 
 export interface AdminOrderStats {
@@ -375,6 +1029,10 @@ export function getAdminOrderStats(): Promise<AdminOrderStats> {
   return adminFetch<AdminOrderStats>('/api/admin/orders/stats');
 }
 
+export function getAdminPendingHandDeliveryCount(): Promise<{ count: number }> {
+  return adminFetch<{ count: number }>('/api/admin/orders/hand-delivery-count');
+}
+
 export function cancelAdminOrder(id: string, reason?: string): Promise<{ success: boolean }> {
   return adminFetch<{ success: boolean }>(`/api/admin/orders/${id}/cancel`, {
     method: 'POST',
@@ -382,15 +1040,57 @@ export function cancelAdminOrder(id: string, reason?: string): Promise<{ success
   });
 }
 
-export function refundAdminOrder(id: string, reason?: string): Promise<{ success: boolean }> {
-  return adminFetch<{ success: boolean }>(`/api/admin/orders/${id}/refund`, {
+export interface AdminRefundResult {
+  success: boolean;
+  idempotent?: boolean;
+  provider: string;
+  amountRefunded: string;
+  currency: string;
+  externalRefundRequired: boolean;
+}
+
+export function refundAdminOrder(id: string, amount?: string, reason?: string): Promise<{
+  success: boolean;
+  refund: AdminRefundResult;
+}> {
+  return adminFetch<{ success: boolean; refund: AdminRefundResult }>(`/api/admin/orders/${id}/refund`, {
     method: 'POST',
-    body: JSON.stringify({ reason })
+    body: JSON.stringify({ amount, reason })
   });
 }
 
 export function retryAdminPayment(id: string): Promise<{ success: boolean }> {
   return adminFetch<{ success: boolean }>(`/api/admin/payments/${id}/retry`, { method: 'POST' });
+}
+
+export interface AdminManualDelivery {
+  id: string;
+  orderItemId: string;
+  orderId: string;
+  productId: string;
+  title: string;
+  content: string;
+  deliveredBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+  orderItem: { id: string; productNameSnapshot: string };
+  product: { id: string; name: string; slug: string };
+}
+
+export function deliverAdminOrder(
+  orderId: string,
+  orderItemId: string,
+  title: string,
+  content: string
+): Promise<{ delivery: AdminManualDelivery }> {
+  return adminFetch<{ delivery: AdminManualDelivery }>(`/api/admin/orders/${orderId}/manual-deliver`, {
+    method: 'POST',
+    body: JSON.stringify({ orderItemId, title, content })
+  });
+}
+
+export function getAdminOrderDeliveries(orderId: string): Promise<{ deliveries: AdminManualDelivery[] }> {
+  return adminFetch<{ deliveries: AdminManualDelivery[] }>(`/api/admin/orders/${orderId}/deliveries`);
 }
 
 // ---------- Payments ----------
@@ -713,6 +1413,55 @@ export function deleteAdminNotificationTarget(id: string): Promise<{ success: bo
   return adminFetch<{ success: boolean }>(`/api/admin/notification-targets/${id}`, { method: 'DELETE' });
 }
 
+export interface AdminNotificationTargetTestResult {
+  success: boolean;
+  error: string | null;
+}
+
+export function testAdminNotificationTarget(id: string): Promise<AdminNotificationTargetTestResult> {
+  return adminFetch<AdminNotificationTargetTestResult>(`/api/admin/notification-targets/${id}/test`, {
+    method: 'POST'
+  });
+}
+
+// ---------- Security events ----------
+
+export interface SecurityEventEntry {
+  id: string;
+  eventType: string;
+  severity: 'INFO' | 'WARNING' | 'CRITICAL';
+  ipAddress: string | null;
+  userId: string | null;
+  user: {
+    id: string;
+    telegramId: string;
+    firstName: string;
+    lastName: string;
+    username: string | null;
+  } | null;
+  metadata: unknown | null;
+  createdAt: string;
+}
+
+export interface AdminSecurityEventsResponse {
+  events: SecurityEventEntry[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export interface AdminSecurityEventFilters {
+  eventType?: string;
+  severity?: 'INFO' | 'WARNING' | 'CRITICAL';
+  search?: string;
+  page?: number;
+  pageSize?: number;
+}
+
+export function getAdminSecurityEvents(filters: AdminSecurityEventFilters = {}): Promise<AdminSecurityEventsResponse> {
+  return adminFetch<AdminSecurityEventsResponse>(`/api/admin/security-events${buildQuery(filters)}`);
+}
+
 // ---------- Payments (admin list) ----------
 
 export interface AdminPaymentsResponse {
@@ -807,5 +1556,45 @@ export function setAdminSmmServiceStatus(id: string, status: 'ACTIVE' | 'DISABLE
   return adminFetch<{ service: AdminSmmService }>(`/api/admin/smm/services/${id}/status`, {
     method: 'POST',
     body: JSON.stringify({ status })
+  });
+}
+
+// ---------- Coupons (admin management) ----------
+
+import type {
+  CouponDetail,
+  CouponsResponse,
+  CreateCouponRequest,
+  UpdateCouponRequest
+} from '@jr/shared';
+
+export interface AdminCouponFilters {
+  search?: string;
+  isActive?: string;
+  page?: number;
+  pageSize?: number;
+}
+
+export function getAdminCoupons(filters: AdminCouponFilters = {}): Promise<CouponsResponse> {
+  return adminFetch<CouponsResponse>(`/api/admin/coupons${buildQuery(filters)}`);
+}
+
+export function createAdminCoupon(data: CreateCouponRequest): Promise<{ coupon: CouponDetail }> {
+  return adminFetch<{ coupon: CouponDetail }>('/api/admin/coupons', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+export function updateAdminCoupon(id: string, data: UpdateCouponRequest): Promise<{ coupon: CouponDetail }> {
+  return adminFetch<{ coupon: CouponDetail }>(`/api/admin/coupons/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(data)
+  });
+}
+
+export function deleteAdminCoupon(id: string): Promise<{ success: boolean }> {
+  return adminFetch<{ success: boolean }>(`/api/admin/coupons/${id}`, {
+    method: 'DELETE'
   });
 }

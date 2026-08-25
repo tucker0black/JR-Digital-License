@@ -2,6 +2,9 @@ import crypto from 'node:crypto';
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import type { User } from '@prisma/client';
 import { prisma } from '../infrastructure/prisma.js';
+import { SecurityService } from '../services/security.service.js';
+
+const securityService = new SecurityService(prisma);
 
 export interface TelegramUser {
   id: number;
@@ -87,6 +90,10 @@ export async function authenticateTelegramUser(
 
   const validated = validateTelegramInitData(initData, botToken);
   if (!validated) {
+    await securityService.record({
+      eventType: 'AUTH_INVALID_INIT_DATA',
+      ip: request.ip
+    });
     reply.status(401).send({ error: 'Invalid Telegram init data' });
     throw new Error('Invalid Telegram init data');
   }
@@ -114,6 +121,12 @@ export async function authenticateTelegramUser(
     });
     created = true;
   } else if (dbUser.status !== 'ACTIVE') {
+    await securityService.record({
+      eventType: 'AUTH_SUSPENDED_ACCOUNT',
+      ip: request.ip,
+      userId: dbUser.id,
+      metadata: { status: dbUser.status }
+    });
     reply.status(403).send({ error: 'Account suspended' });
     throw new Error('Account suspended');
   } else {

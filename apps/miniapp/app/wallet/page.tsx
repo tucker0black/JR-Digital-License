@@ -2,25 +2,28 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
+import { Suspense } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { createDeposit, expirePayment, getPaymentStatus, getWallet, ApiError, type WalletTransaction } from '@/lib/api';
 import { StoreHeader } from '@/components/StoreHeader';
+import { useTranslation } from '@/lib/i18n';
 import { formatDateTime } from '@/lib/format';
 import { TelegramAuthNotice } from '@/components/TelegramAuthNotice';
 import { useTelegramAuth } from '@/components/TelegramProvider';
 
 const QrDisplay = dynamic(
   () => import('@/components/QrDisplay').then((module) => module.QrDisplay),
-  { loading: () => <div className="h-64 w-64 rounded-xl bg-muted" /> }
+  { loading: () => <div className="h-64 w-64 rounded-2xl bg-muted" /> }
 );
 
 const DEPOSIT_PRESETS = [1, 2, 5, 10, 20];
 
 const TX_TYPE_LABELS: Record<string, string> = {
-  DEPOSIT: 'Deposit',
-  PURCHASE: 'Purchase',
-  REFUND: 'Refund',
-  ADJUSTMENT: 'Adjustment',
-  BONUS: 'Bonus'
+  DEPOSIT: 'wallet.txDeposit',
+  PURCHASE: 'wallet.txPurchase',
+  REFUND: 'wallet.txRefund',
+  ADJUSTMENT: 'wallet.txAdjustment',
+  BONUS: 'wallet.txBonus'
 };
 
 const TERMINAL_STATUSES = ['SUCCEEDED', 'FAILED', 'EXPIRED', 'CANCELLED'];
@@ -35,7 +38,17 @@ function formatRemaining(expiresAt?: string | null): string {
 }
 
 export default function WalletPage() {
+  return (
+    <Suspense>
+      <WalletContent />
+    </Suspense>
+  );
+}
+
+function WalletContent() {
+  const searchParams = useSearchParams();
   const { status: telegramStatus } = useTelegramAuth();
+  const { t } = useTranslation();
   const [balance, setBalance] = useState<string | null>(null);
   const [currency, setCurrency] = useState('USD');
   const [transactions, setTransactions] = useState<WalletTransaction[]>([]);
@@ -44,6 +57,7 @@ export default function WalletPage() {
 
   const [depositOpen, setDepositOpen] = useState(false);
   const [customAmount, setCustomAmount] = useState('5.00');
+  const [topUpGame, setTopUpGame] = useState<string | null>(null);
   const [depositCreating, setDepositCreating] = useState(false);
   const [depositError, setDepositError] = useState<string | null>(null);
   const [depositPayment, setDepositPayment] = useState<{
@@ -78,16 +92,28 @@ export default function WalletPage() {
       setTransactions(result.transactions);
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to load wallet');
+      setError(err instanceof Error ? err.message : t('store.unableToLoad'));
     } finally {
       setLoading(false);
     }
+    // Deliberately not keyed on t: switching language must not refetch data.
   }, []);
 
   useEffect(() => {
     if (telegramStatus !== 'ready') return;
     void loadWallet();
   }, [loadWallet, telegramStatus]);
+
+  useEffect(() => {
+    if (telegramStatus !== 'ready') return;
+    const amountParam = searchParams.get('amount');
+    const gameParam = searchParams.get('game');
+    if (gameParam) setTopUpGame(gameParam);
+    if (amountParam && /^\d+(?:\.\d{1,2})?$/.test(amountParam)) {
+      setCustomAmount(amountParam);
+      setDepositOpen(true);
+    }
+  }, [searchParams, telegramStatus]);
 
   useEffect(() => {
     const id = depositPaymentIdRef.current;
@@ -122,7 +148,6 @@ export default function WalletPage() {
           timeout = setTimeout(poll, getNextDelay());
         })
         .catch(() => {
-          // Transient failures should not kill the session.
           timeout = setTimeout(poll, getNextDelay());
         });
     };
@@ -158,12 +183,12 @@ export default function WalletPage() {
   const handleCreateDeposit = useCallback(async () => {
     const normalizedAmount = customAmount.trim();
     if (!/^\d+(?:\.\d{1,2})?$/.test(normalizedAmount)) {
-      setDepositError('Enter a valid deposit amount');
+      setDepositError(t('wallet.enterValidAmount'));
       return;
     }
     const amount = Number(normalizedAmount);
     if (!Number.isFinite(amount) || amount <= 0) {
-      setDepositError('Enter a valid deposit amount');
+      setDepositError(t('wallet.enterValidAmount'));
       return;
     }
     setDepositError(null);
@@ -198,16 +223,16 @@ export default function WalletPage() {
         depositPaymentIdRef.current = null;
         setConflictPayment(body?.activePayment ?? null);
         setPendingRequestedAmount(amount.toFixed(2));
-        setDepositError(body?.error ?? 'Another deposit is already active. Cancel it first.');
+        setDepositError(body?.error ?? t('wallet.activeDeposit'));
         return;
       }
       setDepositPayment(null);
       depositPaymentIdRef.current = null;
-      setDepositError(err instanceof Error ? err.message : 'Unable to create deposit');
+      setDepositError(err instanceof Error ? err.message : t('wallet.enterValidAmount'));
     } finally {
       setDepositCreating(false);
     }
-  }, [customAmount, currency]);
+  }, [customAmount, currency, t]);
 
   const handleResetDeposit = useCallback(() => {
     setDepositStatus('PENDING');
@@ -223,7 +248,23 @@ export default function WalletPage() {
     const id = depositPaymentIdRef.current;
     if (!id) return;
     try {
-      await expirePayment(id);
+      const result = await expirePayment(id);
+      if (result.paid && result.status === 'SUCCEEDED') {
+        setDepositStatus('SUCCEEDED');
+        setDepositVerificationError(null);
+        setDepositError(null);
+        depositPaymentIdRef.current = null;
+        void loadWallet();
+        return;
+      }
+      if (result.status === 'SUCCEEDED') {
+        setDepositStatus('SUCCEEDED');
+        setDepositVerificationError(null);
+        setDepositError(null);
+        depositPaymentIdRef.current = null;
+        void loadWallet();
+        return;
+      }
     } catch {
       // best effort
     }
@@ -231,26 +272,34 @@ export default function WalletPage() {
     setDepositVerificationError(null);
     setDepositPayment(null);
     depositPaymentIdRef.current = null;
-  }, []);
+  }, [loadWallet]);
 
   const handleCancelConflictAndCreateNew = useCallback(async () => {
     if (!conflictPayment?.id) return;
     try {
-      await expirePayment(conflictPayment.id);
+      const result = await expirePayment(conflictPayment.id);
+      if (result.paid && result.status === 'SUCCEEDED') {
+        setConflictPayment(null);
+        setPendingRequestedAmount(null);
+        setDepositError(null);
+        setDepositStatus('SUCCEEDED');
+        void loadWallet();
+        return;
+      }
     } catch {
-      // best effort — the server will reject the new deposit if the old one is still active
+      // best effort
     }
     setConflictPayment(null);
     setPendingRequestedAmount(null);
     setDepositError(null);
     void handleCreateDeposit();
-  }, [conflictPayment, handleCreateDeposit]);
+  }, [conflictPayment, handleCreateDeposit, loadWallet]);
 
   if (telegramStatus !== 'ready') {
     return (
-      <main className="min-h-screen bg-page text-ink">
+      <main className="min-h-screen bg-page bg-cosmic text-ink">
         <StoreHeader />
-        <div className="mx-auto w-full max-w-5xl px-4 pb-16 pt-6 sm:px-6 sm:pt-8">
+        <div className="mx-auto w-full max-w-5xl px-4 pb-24 pt-6 sm:px-6 sm:pt-8 md:pb-16">
           <TelegramAuthNotice />
         </div>
       </main>
@@ -260,18 +309,18 @@ export default function WalletPage() {
   return (
     <main className="min-h-screen bg-page text-ink">
       <StoreHeader />
-      <div className="mx-auto w-full max-w-5xl px-4 pb-16 pt-6 sm:px-6 sm:pt-8">
-        <section className="relative overflow-hidden rounded-3xl border border-line bg-card p-6 sm:p-8">
-          <div className="pointer-events-none absolute -right-16 -top-20 h-56 w-56 rounded-full bg-primary/10 blur-3xl" />
+      <div className="mx-auto w-full max-w-5xl px-4 pb-24 pt-6 sm:px-6 sm:pt-8 md:pb-16">
+        {/* Balance card */}
+        <section className="animate-fade-up relative overflow-hidden rounded-3xl bg-gradient-to-br from-primary via-violet to-accent p-6 sm:p-8">
+          <div className="pointer-events-none absolute -right-20 -top-20 h-64 w-64 rounded-full bg-white/10 blur-3xl" />
+          <div className="pointer-events-none absolute -bottom-20 -left-20 h-56 w-56 rounded-full bg-white/5 blur-3xl" />
           <div className="relative flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-primary">Wallet Balance</p>
-              <p className="mt-2 text-4xl font-bold tracking-tight text-ink">
-                {currency} {loading ? '—' : Number(balance ?? 0).toFixed(2)}
+              <p className="text-[11px] font-medium uppercase tracking-wide-premium text-white/50">{t('wallet.title')}</p>
+              <p className="mt-2 text-4xl font-bold tracking-premium text-white tabular-nums">
+                {currency} {loading ? '\u2014' : Number(balance ?? 0).toFixed(2)}
               </p>
-              <p className="mt-1 text-sm text-soft">
-                Use your balance to pay for orders instantly
-              </p>
+              <p className="mt-1 text-sm text-white/60">{t('wallet.subtitle')}</p>
             </div>
             <button
               type="button"
@@ -280,9 +329,9 @@ export default function WalletPage() {
                 setDepositError(null);
               }}
               disabled={loading}
-              className="rounded-xl bg-primary px-5 py-2.5 font-medium text-white shadow-sm shadow-primary/30 transition hover:bg-primary-dark disabled:opacity-50"
+              className="rounded-xl bg-white/20 px-5 py-2.5 font-semibold text-white backdrop-blur-sm transition-default hover:bg-white/30 active:scale-95 disabled:opacity-50"
             >
-              {depositOpen ? 'Close' : '+ Deposit'}
+              {depositOpen ? t('wallet.close') : t('wallet.deposit')}
             </button>
           </div>
         </section>
@@ -293,35 +342,27 @@ export default function WalletPage() {
           </div>
         )}
 
+        {/* Conflict payment */}
         {depositOpen && conflictPayment && !depositPayment && (
           <section className="animate-fade-up mt-4 rounded-2xl border border-warning/30 bg-warning/10 p-5">
-            <p className="font-semibold text-warning">Another deposit is already active</p>
+            <p className="font-semibold text-warning">{t('wallet.activeDeposit')}</p>
             <p className="mt-1 text-sm text-soft">
-              An active payment session for{' '}
-              <span className="font-bold text-ink">
-                {conflictPayment.currency ?? currency} {Number(conflictPayment.amount ?? 0).toFixed(2)}
-              </span>{' '}
-              {conflictPayment.expiresAt ? (
-                <>is still valid until {formatDateTime(conflictPayment.expiresAt)}.</>
-              ) : (
-                <>is still valid.</>
-              )}
+              {t('wallet.activeDepositDescription', {
+                amount: `${conflictPayment.currency ?? currency} ${Number(conflictPayment.amount ?? 0).toFixed(2)}`,
+                expiry: conflictPayment.expiresAt ? ` ${t('wallet.activeDepositUntil', { date: formatDateTime(conflictPayment.expiresAt) })}` : '',
+              })}
             </p>
             <p className="mt-1 text-sm text-soft">
-              Your requested amount of{' '}
-              <span className="font-bold text-ink">
-                {currency} {Number(pendingRequestedAmount ?? 0).toFixed(2)}
-              </span>{' '}
-              was not created. Cancel the old deposit to create the new one.
+              {t('wallet.requestedAmountNotCreated', { amount: `${currency} ${Number(pendingRequestedAmount ?? 0).toFixed(2)}` })}
             </p>
             <div className="mt-4 flex flex-wrap gap-2">
               <button
                 type="button"
                 onClick={() => void handleCancelConflictAndCreateNew()}
                 disabled={depositCreating}
-                className="rounded-xl bg-primary px-5 py-2.5 font-medium text-white transition hover:bg-primary-dark disabled:opacity-50"
+                className="rounded-xl bg-gradient-to-r from-primary to-violet px-5 py-2.5 font-semibold text-white shadow-md shadow-primary/20 transition-default hover:shadow-lg active:scale-95 disabled:opacity-50"
               >
-                {depositCreating ? 'Creating payment…' : 'Cancel Old Deposit & Create New'}
+                {depositCreating ? t('wallet.creatingPaymentDots') : t('wallet.cancelOldAndCreateNew')}
               </button>
               <button
                 type="button"
@@ -330,40 +371,44 @@ export default function WalletPage() {
                   setPendingRequestedAmount(null);
                   setDepositError(null);
                 }}
-                className="rounded-xl border border-line bg-page px-5 py-2.5 font-medium text-ink transition hover:border-primary/40"
+                className="rounded-xl border border-line bg-card px-5 py-2.5 font-medium text-ink transition-default hover:border-primary/40"
               >
-                Keep Old Deposit
+                {t('wallet.keepOldDeposit')}
               </button>
             </div>
           </section>
         )}
 
+        {/* Deposit form */}
         {depositOpen && !depositPayment && !conflictPayment && (
-          <section className="animate-fade-up mt-4 rounded-2xl border border-line bg-card p-5">
-            <h2 className="font-semibold text-ink">Deposit via KHQR / Bakong</h2>
+          <section className="animate-fade-up mt-4 rounded-2xl card-cosmic p-5">
+            <h2 className="font-semibold text-ink">{t('wallet.depositViaKHQR')}</h2>
             <p className="mt-1 text-sm text-soft">
-              Choose an amount. A payment QR will be generated — scan and pay with the Bakong app.
+              {t('wallet.chooseAmount')}
             </p>
+            {topUpGame && (
+              <p className="mt-3 rounded-xl border border-primary/30 bg-primary/10 px-3 py-2 text-xs text-primary">
+                {t('wallet.depositForGame', { game: topUpGame })}
+              </p>
+            )}
             <div className="mt-4 flex flex-wrap gap-2">
               {DEPOSIT_PRESETS.map((preset) => (
                 <button
                   key={preset}
                   type="button"
-                  onClick={() => {
-                    setCustomAmount(preset.toFixed(2));
-                  }}
-                  className={`rounded-xl border px-4 py-2 font-medium transition ${
+                  onClick={() => setCustomAmount(preset.toFixed(2))}
+                  className={`rounded-xl border px-4 py-2.5 font-semibold transition-default ${
                     parseFloat(customAmount) === preset
-                      ? 'border-primary bg-primary text-white'
-                      : 'border-line bg-page text-ink hover:border-primary/40'
+                      ? 'border-primary bg-gradient-to-r from-primary to-violet text-white shadow-md shadow-primary/20'
+                      : 'border-line bg-card text-ink hover:border-primary/40'
                   }`}
                 >
                   {currency} {preset}
                 </button>
               ))}
             </div>
-            <div className="mt-3">
-              <label className="mb-1 block text-sm text-soft">Custom amount</label>
+            <div className="mt-4">
+              <label className="mb-1.5 block text-sm font-medium text-soft">{t('wallet.customAmount')}</label>
               <input
                 type="number"
                 min="0.5"
@@ -371,7 +416,7 @@ export default function WalletPage() {
                 value={customAmount}
                 onChange={(e) => setCustomAmount(e.target.value)}
                 placeholder="0.00"
-                className="w-full rounded-xl border border-line bg-page px-3 py-2 text-ink outline-none focus:border-primary sm:max-w-xs"
+                className="w-full rounded-xl border border-line bg-card px-4 py-2.5 text-ink outline-none transition-default focus:border-primary focus:ring-2 focus:ring-primary/15 sm:max-w-xs"
               />
             </div>
             {depositError && <p className="mt-3 text-sm text-danger">{depositError}</p>}
@@ -379,84 +424,89 @@ export default function WalletPage() {
               type="button"
               onClick={() => void handleCreateDeposit()}
               disabled={depositCreating}
-              className="mt-4 rounded-xl bg-primary px-5 py-2.5 font-medium text-white transition hover:bg-primary-dark disabled:opacity-50"
+              className="mt-5 rounded-xl bg-gradient-to-r from-primary to-violet px-5 py-3 font-semibold text-white shadow-md shadow-primary/20 transition-default hover:shadow-lg active:scale-95 disabled:opacity-50"
             >
-              {depositCreating ? 'Creating payment…' : 'Create Deposit QR'}
+              {depositCreating ? t('wallet.creatingPayment') : t('wallet.createDepositQR')}
             </button>
           </section>
         )}
 
+        {/* Success */}
         {depositPayment && depositStatus === 'SUCCEEDED' && (
-          <section className="animate-fade-up mt-4 rounded-2xl border border-success/30 bg-success/10 p-5 text-center">
-            <div className="mb-2 text-2xl text-success">✓</div>
-            <p className="font-medium text-success">Deposit completed</p>
-            <p className="mt-1 text-sm text-success">Your balance has been updated.</p>
+          <section className="animate-fade-up mt-4 rounded-2xl border border-success/30 bg-success/10 p-6 text-center">
+            <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-success/20">
+              <span className="text-xl text-success">✓</span>
+            </div>
+            <p className="font-semibold text-success">{t('wallet.depositCompleted')}</p>
+            <p className="mt-1 text-sm text-success/80">{t('wallet.balanceUpdated')}</p>
             <button
               type="button"
               onClick={handleResetDeposit}
-              className="mt-4 rounded-xl bg-primary px-5 py-2.5 font-medium text-white transition hover:bg-primary-dark"
+              className="mt-4 rounded-xl bg-gradient-to-r from-primary to-violet px-5 py-2.5 font-semibold text-white shadow-md shadow-primary/20 transition-default hover:shadow-lg active:scale-95"
             >
-              Create New Deposit
+              {t('wallet.createNewDeposit')}
             </button>
           </section>
         )}
 
+        {/* Expired/Failed/Cancelled */}
         {depositPayment &&
           (depositStatus === 'EXPIRED' || depositStatus === 'CANCELLED' || depositStatus === 'FAILED') && (
-            <section className="animate-fade-up mt-4 rounded-2xl border border-line bg-card p-5 text-center">
+            <section className="animate-fade-up mt-4 rounded-2xl card-cosmic p-5 text-center">
               <p className="font-medium text-danger">
-                  {depositStatus === 'FAILED' ? 'Deposit failed' : depositStatus === 'EXPIRED' ? 'Payment expired' : 'Deposit session closed'}
+                  {depositStatus === 'FAILED' ? t('wallet.depositFailed') : depositStatus === 'EXPIRED' ? t('wallet.paymentExpired') : t('wallet.depositClosed')}
               </p>
               <p className="mt-1 text-sm text-soft">
                   {depositStatus === 'EXPIRED'
-                  ? 'The payment session expired. No money was charged — create a new payment QR to try again.'
+                  ? t('wallet.expiredDescription')
                   : depositStatus === 'CANCELLED'
-                    ? 'The payment session was cancelled. No money was charged — you can create a new deposit.'
-                    : 'The deposit could not be completed. No money was charged.'}
+                    ? t('wallet.cancelledDescription')
+                    : t('wallet.failedDescription')}
               </p>
               <button
                 type="button"
                 onClick={handleResetDeposit}
-                className="mt-4 rounded-xl bg-primary px-5 py-2.5 font-medium text-white transition hover:bg-primary-dark"
+                className="mt-4 rounded-xl bg-gradient-to-r from-primary to-violet px-5 py-2.5 font-semibold text-white shadow-md shadow-primary/20 transition-default hover:shadow-lg active:scale-95"
               >
-                Create New Deposit
+                {t('wallet.createNewDeposit')}
               </button>
             </section>
           )}
 
+        {/* Active payment QR */}
         {depositPayment && !TERMINAL_STATUSES.includes(depositStatus) && (
-          <section className="animate-fade-up mt-4 rounded-2xl border border-line bg-card p-5">
+          <section className="animate-fade-up mt-4 rounded-2xl card-cosmic p-5">
             {depositPayment.resumed && (
-              <p className="mb-3 rounded-xl border border-primary/30 bg-primary/10 px-3 py-2 text-xs text-primary">
-                A payment session for the same amount is already active and was kept — it stays valid until it expires. You can cancel it below and create a new one.
+              <p className="mb-4 rounded-xl border border-primary/30 bg-primary/10 px-3 py-2 text-xs text-primary">
+                {t('wallet.resumedSessionNote')}
               </p>
             )}
             <div className="flex items-center justify-between">
-              <h2 className="font-semibold text-ink">Scan to deposit</h2>
-              <span className="rounded-full border border-line bg-page px-3 py-1 text-sm font-medium text-soft">
+              <h2 className="font-semibold text-ink">{t('wallet.scanToDeposit')}</h2>
+              <span className="rounded-lg border border-line bg-muted px-3 py-1 text-xs font-medium text-soft">
                 {depositStatus}
               </span>
             </div>
-            <div className="mt-3 space-y-2 text-sm text-soft">
+            <div className="mt-4 space-y-2.5 text-sm text-soft">
               <div className="flex justify-between">
-                <span>Reference</span>
+                <span>{t('wallet.reference')}</span>
                 <span className="font-mono text-xs text-ink">{depositPayment.reference}</span>
               </div>
               {depositPayment.merchantName && (
                 <div className="flex justify-between">
-                  <span>Merchant</span>
+                  <span>{t('wallet.merchant')}</span>
                   <span className="font-medium text-ink">{depositPayment.merchantName}</span>
                 </div>
               )}
               <div className="flex justify-between">
-                <span>Amount</span>
+                <span>{t('wallet.amount')}</span>
                 <span className="font-bold text-primary">
                   {depositPayment.currency ?? currency} {Number(depositPayment.amount ?? 0).toFixed(2)}
                 </span>
               </div>
               {remaining && (
                 <div className="flex justify-between">
-                  <span>Expires in</span>
+                  <span>{t('wallet.expiresIn')}</span>
                   <span className={`font-mono ${remaining === 'Expired' ? 'text-danger' : 'text-ink'}`}>
                     {remaining}
                   </span>
@@ -464,16 +514,16 @@ export default function WalletPage() {
               )}
             </div>
             {depositPayment.qrCodeData && (
-              <div className="mt-4 flex flex-col items-center gap-2">
+              <div className="mt-5 flex flex-col items-center gap-2">
                 <QrDisplay
                   value={depositPayment.qrCodeImage ?? depositPayment.qrCodeData}
                   alt="KHQR deposit"
                 />
-                <p className="text-xs text-soft">Scan with the Bakong / KHQR app to deposit</p>
+                <p className="text-xs text-soft">{t('wallet.scanWithBakong')}</p>
               </div>
             )}
             {depositVerificationError && (
-              <p className="mt-3 rounded-xl border border-warning/30 bg-warning/10 px-3 py-2 text-center text-xs text-warning">
+              <p className="mt-4 rounded-xl border border-warning/30 bg-warning/10 px-3 py-2 text-center text-xs text-warning">
                 {depositVerificationError}
               </p>
             )}
@@ -482,9 +532,9 @@ export default function WalletPage() {
                 href={depositPayment.paymentUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="mt-3 block rounded-xl bg-primary px-4 py-3 text-center font-medium text-white"
+                className="mt-4 block rounded-xl bg-gradient-to-r from-primary to-violet px-4 py-3 text-center font-semibold text-white shadow-md shadow-primary/20 transition-default hover:shadow-lg active:scale-95"
               >
-                Open Payment Page
+                {t('wallet.openPaymentPage')}
               </a>
             )}
             <div className="mt-4 flex gap-2">
@@ -499,51 +549,58 @@ export default function WalletPage() {
                       setDepositVerificationError(result.verificationError ?? null);
                       if (result.payment.status === 'SUCCEEDED') void loadWallet();
                     })
-                    .catch(() => setDepositError('Unable to refresh payment status'));
+                    .catch(() => setDepositError(t('store.unableToLoad')));
                 }}
-                className="flex-1 rounded-xl border border-line bg-page px-4 py-2 font-medium text-ink hover:border-primary/40"
+                className="flex-1 rounded-xl border border-line bg-card px-4 py-2.5 font-medium text-ink transition-default hover:border-primary/40"
               >
-                Refresh Status
+                {t('wallet.refreshStatus')}
               </button>
               <button
                 type="button"
                 onClick={() => void handleCancelDeposit()}
-                className="flex-1 rounded-xl border border-danger/30 bg-danger/10 px-4 py-2 font-medium text-danger hover:bg-danger/20"
+                className="flex-1 rounded-xl border border-danger/30 bg-danger/10 px-4 py-2.5 font-medium text-danger transition-default hover:bg-danger/20"
               >
-                Cancel
+                {t('wallet.cancel')}
               </button>
             </div>
           </section>
         )}
 
+        {/* Transactions */}
         <section className="mt-8">
-          <h2 className="text-lg font-bold tracking-tight text-ink">Transactions</h2>
+          <h2 className="text-lg font-bold tracking-premium text-ink">{t('wallet.transactions')}</h2>
           {transactions.length === 0 ? (
-            <div className="mt-3 rounded-2xl border border-line bg-card p-6 text-center text-sm text-soft">
-              No transactions yet. Deposit to your wallet to get started.
+            <div className="mt-3 rounded-2xl card-cosmic p-6 text-center text-sm text-muted-text">
+              {t('wallet.noTransactions')}
             </div>
           ) : (
-            <ul className="mt-3 divide-y divide-line rounded-2xl border border-line bg-card">
+            <ul className="mt-3 space-y-2">
               {transactions.map((tx) => {
                 const amount = Number(tx.amount);
                 const isCredit = tx.type === 'DEPOSIT' || tx.type === 'REFUND' || tx.type === 'BONUS';
                 return (
-                  <li key={tx.id} className="flex items-center justify-between gap-3 px-4 py-3">
-                    <div className="min-w-0">
-                      <p className="font-medium text-ink">
-                        {TX_TYPE_LABELS[tx.type] ?? tx.type}
-                        <span className="ml-2 text-xs font-normal text-soft">{tx.status}</span>
-                      </p>
-                      <p className="truncate text-xs text-soft">
-                        {tx.reason || tx.reference}
-                      </p>
-                      <p className="mt-0.5 text-xs text-soft">{formatDateTime(tx.createdAt)}</p>
+                  <li key={tx.id} className="flex items-center justify-between gap-3 rounded-2xl card-cosmic p-4 transition-luxury hover:-translate-y-0.5 hover:shadow-md">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-sm font-bold ${
+                        isCredit ? 'bg-success/10 text-success' : 'bg-primary/10 text-primary'
+                      }`}>
+                        {isCredit ? '+' : '\u2212'}
+                      </div>
+                      <div className="min-w-0">
+                        <p className="truncate font-medium text-ink">
+                          {t(TX_TYPE_LABELS[tx.type] ?? tx.type)}
+                        </p>
+                        <p className="truncate text-xs text-muted-text">
+                          {tx.reason || tx.reference}
+                        </p>
+                        <p className="mt-0.5 text-[11px] text-muted-text/70">{formatDateTime(tx.createdAt)}</p>
+                      </div>
                     </div>
-                    <div className="text-right">
-                      <p className={`font-semibold ${isCredit ? 'text-success' : 'text-ink'}`}>
-                        {isCredit ? '+' : '−'}{currency} {amount.toFixed(2)}
+                    <div className="shrink-0 text-right">
+                      <p className={`whitespace-nowrap text-sm font-bold tabular-nums ${isCredit ? 'text-success' : 'text-ink'}`}>
+                        {isCredit ? '+' : '\u2212'}{currency} {amount.toFixed(2)}
                       </p>
-                      <p className="text-xs text-soft">Balance {currency} {Number(tx.balanceAfter).toFixed(2)}</p>
+                      <p className="whitespace-nowrap text-[10px] text-muted-text">{t('wallet.balanceAfterLabel', { amount: `${currency} ${Number(tx.balanceAfter).toFixed(2)}` })}</p>
                     </div>
                   </li>
                 );

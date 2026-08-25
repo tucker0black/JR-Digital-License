@@ -23,10 +23,11 @@ export default function AdminOrdersPage() {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('');
+  const [deliveryType, setDeliveryType] = useState('');
 
   const orders = useAsync(
-    () => getAdminOrders({ page, pageSize: 20, search: search || undefined, status: status || undefined }),
-    [page, search, status]
+    () => getAdminOrders({ page, pageSize: 20, search: search || undefined, status: status || undefined, deliveryType: deliveryType || undefined }),
+    [page, search, status, deliveryType]
   );
 
   if (orders.loading) return <LoadingState label="Loading orders…" />;
@@ -36,7 +37,7 @@ export default function AdminOrdersPage() {
     <div>
       <PageHeader title="Orders" description="All customer orders and their payment/fulfillment state" />
 
-      <div className="mb-4 grid gap-3 sm:grid-cols-2">
+      <div className="mb-4 grid gap-3 sm:grid-cols-3">
         <Input
           placeholder="Search by order number or ID…"
           value={search}
@@ -48,13 +49,23 @@ export default function AdminOrdersPage() {
             <option key={s} value={s}>{s}</option>
           ))}
         </Select>
+        <Select value={deliveryType} onChange={(e) => { setDeliveryType(e.target.value); setPage(1); }}>
+          <option value="">All delivery types</option>
+          <option value="automatic">Automatic</option>
+          <option value="hand_delivery">Hand Delivery</option>
+          <option value="waiting_delivery">Waiting for Delivery</option>
+          <option value="delivered">Delivered</option>
+        </Select>
       </div>
 
       <Card>
         {orders.data && orders.data.orders.length > 0 ? (
           <>
-            <Table headers={['#', 'Customer', 'Items', 'Total', 'Payments', 'Status', 'Date', '']}>
-              {orders.data.orders.map((order) => (
+            <Table headers={['#', 'Customer', 'Items', 'Total', 'Payments', 'Delivery', 'Status', 'Date', '']}>
+              {orders.data.orders.map((order) => {
+                const isHandDelivery = order.items.some((item) => item.product?.isHandDelivery);
+                const hasDeliveredItem = order.items.some((item) => item.fulfillment?.status === 'DELIVERED');
+                return (
                 <tr key={order.id}>
                   <td className="px-3 py-2 font-medium text-slate-200">#{order.orderNumber}</td>
                   <td className="px-3 py-2">
@@ -75,6 +86,17 @@ export default function AdminOrdersPage() {
                       {order.payments.length === 0 && <span className="text-xs text-slate-600">none</span>}
                     </div>
                   </td>
+                  <td className="px-3 py-2">
+                    {isHandDelivery ? (
+                      <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                        hasDeliveredItem ? 'bg-emerald-900/40 text-emerald-300' : 'bg-amber-900/40 text-amber-300'
+                      }`}>
+                        {hasDeliveredItem ? 'Delivered' : 'Hand Delivery'}
+                      </span>
+                    ) : (
+                      <span className="text-xs text-slate-600">—</span>
+                    )}
+                  </td>
                   <td className="px-3 py-2"><StatusBadge status={order.status} /></td>
                   <td className="px-3 py-2 text-slate-300">{formatDate(order.createdAt)}</td>
                   <td className="px-3 py-2">
@@ -83,7 +105,8 @@ export default function AdminOrdersPage() {
                     </Link>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </Table>
             <Pagination page={orders.data.page} total={orders.data.total} pageSize={orders.data.pageSize} onChange={setPage} />
           </>

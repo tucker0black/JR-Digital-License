@@ -24,6 +24,8 @@ export interface CreateProductInput {
   sortOrder?: number;
   instructions?: string;
   keywords?: string[];
+  smmServiceIds?: string[];
+  isHandDelivery?: boolean;
 }
 
 export interface UpdateProductInput {
@@ -48,6 +50,8 @@ export interface UpdateProductInput {
   sortOrder?: number;
   instructions?: string | null;
   keywords?: string[];
+  smmServiceIds?: string[];
+  isHandDelivery?: boolean;
 }
 
 export interface ProductFilters {
@@ -86,6 +90,7 @@ export interface ProductWithDetails {
   sortOrder: number;
   instructions: string | null;
   keywords: string[];
+  isHandDelivery: boolean;
   createdAt: Date;
   updatedAt: Date;
   category: {
@@ -99,6 +104,52 @@ export interface ProductWithDetails {
     sold: number;
     disabled: number;
   };
+  smmServices?: Array<{
+    id: string;
+    providerId: string;
+    providerServiceId: string;
+    name: string;
+    status: string;
+    provider: { id: string; name: string };
+  }>;
+}
+
+const productDetailInclude = {
+  category: { select: { id: true, name: true, slug: true } },
+  stock: { select: { status: true } },
+  smmServices: {
+    include: { provider: { select: { id: true, name: true } } },
+    orderBy: { name: 'asc' }
+  }
+} as const;
+
+async function linkSmmServices(
+  tx: { smmService: { findMany(args: unknown): Promise<Array<{ id: string; status: string; productId: string | null }>>; updateMany(args: unknown): Promise<unknown> } },
+  productId: string,
+  serviceIds: string[]
+): Promise<void> {
+  const uniqueIds = Array.from(new Set(serviceIds));
+  if (uniqueIds.length === 0) return;
+
+  const services = await tx.smmService.findMany({
+    where: { id: { in: uniqueIds } }
+  });
+
+  if (services.length !== uniqueIds.length) {
+    throw new Error('One or more SMM services do not exist');
+  }
+
+  const invalid = services.filter(
+    (s) => s.status !== 'ACTIVE' || (s.productId !== null && s.productId !== productId)
+  );
+  if (invalid.length > 0) {
+    throw new Error('Some SMM services are not available to link (inactive or already linked to another product)');
+  }
+
+  await tx.smmService.updateMany({
+    where: { id: { in: uniqueIds } },
+    data: { productId }
+  });
 }
 
 export class ProductService {
@@ -229,10 +280,7 @@ export class ProductService {
   async getProductById(id: string): Promise<ProductWithDetails | null> {
     const product = await this.prisma.product.findUnique({
       where: { id },
-      include: {
-        category: { select: { id: true, name: true, slug: true } },
-        stock: { select: { status: true } }
-      }
+      include: productDetailInclude
     });
 
     if (!product) return null;
@@ -260,10 +308,7 @@ export class ProductService {
   async getProductBySlug(slug: string): Promise<ProductWithDetails | null> {
     const product = await this.prisma.product.findUnique({
       where: { slug },
-      include: {
-        category: { select: { id: true, name: true, slug: true } },
-        stock: { select: { status: true } }
-      }
+      include: productDetailInclude
     });
 
     if (!product) return null;
@@ -329,9 +374,15 @@ export class ProductService {
           isPopular: input.isPopular || false,
           sortOrder: input.sortOrder || 0,
           instructions: input.instructions,
-          keywords: input.keywords || []
+          keywords: input.keywords || [],
+          isHandDelivery: input.isHandDelivery || false
         }
       });
+
+      // Link SMM services to the new product
+      if (input.smmServiceIds) {
+        await linkSmmServices(tx, product.id, input.smmServiceIds);
+      }
 
       // Create audit log
       await tx.auditLog.create({
@@ -345,17 +396,16 @@ export class ProductService {
             slug: product.slug,
             price: product.price.toString(),
             status: product.status,
-            isActive: product.isActive
+            isActive: product.isActive,
+            isHandDelivery: product.isHandDelivery,
+            smmServiceIds: input.smmServiceIds || []
           }
         }
       });
 
       return tx.product.findUnique({
         where: { id: product.id },
-        include: {
-          category: { select: { id: true, name: true, slug: true } },
-          stock: { select: { status: true } }
-        }
+        include: productDetailInclude
       });
     });
 
@@ -445,9 +495,22 @@ export class ProductService {
           isPopular: input.isPopular,
           sortOrder: input.sortOrder,
           instructions: input.instructions,
-          keywords: input.keywords
+          keywords: input.keywords,
+          isHandDelivery: input.isHandDelivery
         }
       });
+
+      // Replace the product's SMM service links with the selected set
+      // (only when the admin explicitly sent smmServiceIds).
+      if (input.smmServiceIds !== undefined) {
+        await tx.smmService.updateMany({
+          where: { productId: id },
+          data: { productId: null }
+        });
+        if (input.smmServiceIds.length > 0) {
+          await linkSmmServices(tx, id, input.smmServiceIds);
+        }
+      }
 
       // Create audit log
       await tx.auditLog.create({
@@ -465,17 +528,16 @@ export class ProductService {
             status: product.status,
             isActive: product.isActive,
             isFeatured: product.isFeatured,
-            isPopular: product.isPopular
+            isPopular: product.isPopular,
+            isHandDelivery: product.isHandDelivery,
+            smmServiceIds: input.smmServiceIds
           }
         }
       });
 
       return tx.product.findUnique({
         where: { id: product.id },
-        include: {
-          category: { select: { id: true, name: true, slug: true } },
-          stock: { select: { status: true } }
-        }
+        include: productDetailInclude
       });
     });
 
@@ -602,7 +664,8 @@ export class ProductService {
           isPopular: false,
           sortOrder: 0,
           instructions: existing.instructions,
-          keywords: existing.keywords
+          keywords: existing.keywords,
+          isHandDelivery: existing.isHandDelivery
         }
       });
 

@@ -1,3 +1,10 @@
+import type {
+  CustomerFlashDealsResponse,
+  FavoriteCheckResponse,
+  FavoritesResponse
+} from '@jr/shared';
+import type { CustomerFlashDeal } from '@jr/shared';
+export type { CustomerFlashDeal } from '@jr/shared';
 import { resolveBrowserApiBase } from './browser-api-base';
 
 const isBrowser = typeof window !== 'undefined';
@@ -197,11 +204,57 @@ export interface Product {
   sortOrder: number;
   instructions: string | null;
   keywords: string[];
+  isHandDelivery: boolean;
   createdAt: string;
   updatedAt: string;
   category?: Category;
   availableStock?: number;
   isOutOfStock?: boolean;
+  services?: SmmServiceOption[];
+}
+
+export interface SmmServiceOption {
+  id: string;
+  name: string;
+  minimumQuantity: number;
+  maximumQuantity: number;
+}
+
+export interface TopUpPackage {
+  id: string;
+  game: string;
+  name: string;
+  diamondAmount: number;
+  content: string | null;
+  price: string;
+  currency: string;
+  isActive: boolean;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+  requiresPlayerId?: boolean;
+  gameImageUrl?: string | null;
+  icon?: string | null;
+  imageUrl?: string | null;
+  customerNote?: string | null;
+  noteColor?: 'WARNING' | 'INFO' | 'SUCCESS' | 'DANGER' | 'PURPLE';
+}
+
+export interface TopUpCustomField {
+  key: string;
+  label: string;
+  required: boolean;
+  placeholder?: string;
+}
+
+export interface TopUpGameConfig {
+  requirePlayerId: boolean;
+  requireServerId: boolean;
+  playerIdValidation: 'NUMERIC' | 'TEXT';
+  serverIdValidation: 'NUMERIC' | 'TEXT';
+  verificationEnabled: boolean;
+  customerNote: string | null;
+  customFields: TopUpCustomField[];
 }
 
 export interface OrderItem {
@@ -227,6 +280,11 @@ export interface OrderItem {
   } | null;
   deliveryValue?: string | null;
   deliveryValues?: string[];
+  manualDelivery?: {
+    title: string;
+    content: string;
+    deliveredAt: string;
+  } | null;
 }
 
 export interface Order {
@@ -304,6 +362,7 @@ export interface MeResponse {
   user: {
     id: string;
     telegramId: string;
+    customerId: string;
     username: string | null;
     firstName: string;
     lastName: string | null;
@@ -328,8 +387,65 @@ export async function getMe(): Promise<MeResponse> {
   return fetchJson<MeResponse>('/api/me');
 }
 
+export interface MeHomeResponse {
+  user: {
+    firstName: string;
+    lastName: string | null;
+    username: string | null;
+    photoUrl: string | null;
+    accountStatus: 'NEW' | 'EXISTING';
+    totalItemsPurchased: number;
+    totalOrders: number;
+    totalDeposited: string;
+  };
+  wallet: {
+    balance: string;
+    currency: string;
+  };
+}
+
+export async function getMeHome(): Promise<MeHomeResponse> {
+  return fetchJson<MeHomeResponse>('/api/me/home');
+}
+
+export interface SupportAvailability {
+  isOpen: boolean;
+  openTime: string;
+  closeTime: string;
+  timezoneLabel: string;
+  serverTime: string;
+}
+
+export async function getSupportAvailability(): Promise<SupportAvailability> {
+  return fetchPublicJson<SupportAvailability>('/api/support/availability');
+}
+
 export async function getCategories(): Promise<CategoriesResponse> {
   return fetchPublicJson<CategoriesResponse>('/api/categories');
+}
+
+export interface CustomerBanner {
+  id: string;
+  title: string;
+  subtitle: string | null;
+  imageUrl: string | null;
+  buttonText: string | null;
+  buttonDestination: string | null;
+  targetType: string;
+  targetCategoryId: string | null;
+  targetProductId: string | null;
+  targetPage: string | null;
+}
+
+export async function getBanners(params?: {
+  targetType?: string;
+  categoryId?: string;
+}): Promise<{ banners: CustomerBanner[] }> {
+  const searchParams = new URLSearchParams();
+  if (params?.targetType) searchParams.set('targetType', params.targetType);
+  if (params?.categoryId) searchParams.set('categoryId', params.categoryId);
+  const query = searchParams.toString();
+  return fetchPublicJson(`/api/banners${query ? `?${query}` : ''}`);
 }
 
 export async function getCategory(slug: string): Promise<{ category: Category & { products: Product[] } }> {
@@ -343,6 +459,9 @@ export async function getProducts(params?: {
   pageSize?: number;
   featured?: boolean;
   popular?: boolean;
+  deliveryType?: string;
+  inStock?: string;
+  sort?: string;
 }): Promise<ProductsResponse> {
   const searchParams = new URLSearchParams();
   if (params?.search) searchParams.set('search', params.search);
@@ -351,6 +470,9 @@ export async function getProducts(params?: {
   if (params?.pageSize) searchParams.set('pageSize', String(params.pageSize));
   if (params?.featured) searchParams.set('featured', 'true');
   if (params?.popular) searchParams.set('popular', 'true');
+  if (params?.deliveryType) searchParams.set('deliveryType', params.deliveryType);
+  if (params?.inStock) searchParams.set('inStock', params.inStock);
+  if (params?.sort) searchParams.set('sort', params.sort);
 
   const query = searchParams.toString();
   return fetchPublicJson<ProductsResponse>(`/api/products${query ? `?${query}` : ''}`);
@@ -364,9 +486,106 @@ export async function createOrder(data: {
   productId: string;
   quantity: number;
   target?: string;
+  serviceId?: string;
+  /** @deprecated Accepted by older API clients; new clients use serviceId. */
+  providerServiceId?: string;
   idempotencyKey?: string;
+  couponCode?: string;
 }): Promise<{ order: Order }> {
   return fetchJson('/api/orders', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+export interface TopUpGame {
+  id: string;
+  name: string;
+  imageUrl: string | null;
+}
+
+export async function getTopUpGames(): Promise<{ games: TopUpGame[] }> {
+  return fetchPublicJson<{ games: TopUpGame[] }>('/api/topup/games');
+}
+
+export async function getTopUpPackages(gameId?: string): Promise<{ packages: TopUpPackage[]; config: TopUpGameConfig | null }> {
+  const query = gameId ? `?gameId=${encodeURIComponent(gameId)}` : '';
+  return fetchPublicJson<{ packages: TopUpPackage[]; config: TopUpGameConfig | null }>(`/api/topup/packages${query}`);
+}
+
+export async function createTopUpOrder(data: {
+  packageId: string;
+  target?: string;
+  serverId?: string;
+  customFields?: Record<string, string>;
+  idempotencyKey?: string;
+}): Promise<{ order: Order }> {
+  return fetchJson('/api/topup/orders', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+// ---------- Generic provider-driven account verification ----------
+
+export interface TopUpVerificationField {
+  key: string;
+  label: string;
+  type?: string;
+}
+
+/** Metadata returned by the backend for one package (provider-driven). */
+export interface TopUpVerificationInfo {
+  applicable: boolean;
+  verificationAvailable: boolean;
+  availabilityKnown: boolean;
+  fields: TopUpVerificationField[];
+  allowUnverifiedPurchase: boolean;
+}
+
+export interface VerifyPlayerResponse {
+  /** true = verified; false = checked but invalid; null = not supported/unavailable. */
+  valid: boolean | null;
+  verified: boolean;
+  playerName: string | null;
+  verificationToken: string | null;
+  expiresAt: string | null;
+  verificationAvailable: boolean;
+  allowUnverifiedPurchase: boolean;
+  reason: 'PLAYER_NOT_FOUND' | 'VALIDATION_NOT_SUPPORTED' | 'VERIFICATION_UNAVAILABLE' | 'MISSING_FIELDS' | 'UNKNOWN_FIELD' | 'PACKAGE_NOT_FOUND' | null;
+  error: string | null;
+}
+
+export async function getTopUpVerificationInfo(packageId: string): Promise<TopUpVerificationInfo> {
+  return fetchJson<TopUpVerificationInfo>(`/api/topup/verification-info?packageId=${encodeURIComponent(packageId)}`, { method: 'GET' });
+}
+
+export async function verifyTopUpPlayer(data: {
+  packageId: string;
+  fields: Record<string, string>;
+}): Promise<VerifyPlayerResponse> {
+  return fetchJson<VerifyPlayerResponse>('/api/verify-player', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+export interface VerifyAccountResponse {
+  success: boolean;
+  accountName?: string;
+  verifiedAt?: string;
+  target?: string;
+  serverId?: string | null;
+  error?: string;
+}
+
+export async function verifyTopUpAccount(data: {
+  gameId: string;
+  packageId?: string;
+  target: string;
+  serverId?: string;
+}): Promise<VerifyAccountResponse> {
+  return fetchJson('/api/topup/verify-account', {
     method: 'POST',
     body: JSON.stringify(data)
   });
@@ -403,7 +622,13 @@ export async function getPaymentStatus(id: string): Promise<PaymentStatusRespons
   return fetchJson(`/api/payments/${id}`);
 }
 
-export async function expirePayment(id: string): Promise<{ success: boolean }> {
+export async function expirePayment(id: string): Promise<{
+  success: boolean;
+  status: string;
+  paid?: boolean;
+  cancelled?: boolean;
+  alreadyTerminal?: boolean;
+}> {
   return fetchJson(`/api/payments/${id}/expire`, {
     method: 'POST'
   });
@@ -505,5 +730,94 @@ export async function replyToTicket(id: string, body: string): Promise<{ message
   return fetchJson(`/api/tickets/${id}/messages`, {
     method: 'POST',
     body: JSON.stringify({ body })
+  });
+}
+
+// ---------- Flash Deals ----------
+
+export async function getFlashDeals(): Promise<CustomerFlashDealsResponse> {
+  return fetchJson<CustomerFlashDealsResponse>('/api/flash-deals');
+}
+
+export async function getProductFlashDeal(slug: string): Promise<{ deal: CustomerFlashDeal | null }> {
+  return fetchJson(`/api/products/${slug}/flash-deal`);
+}
+
+// ---------- Favorites ----------
+
+export async function getFavorites(params?: {
+  page?: number;
+  pageSize?: number;
+}): Promise<FavoritesResponse> {
+  const searchParams = new URLSearchParams();
+  if (params?.page) searchParams.set('page', String(params.page));
+  if (params?.pageSize) searchParams.set('pageSize', String(params.pageSize));
+  const query = searchParams.toString();
+  return fetchJson<FavoritesResponse>(`/api/favorites${query ? `?${query}` : ''}`);
+}
+
+export async function addFavorite(productId: string): Promise<{ favorite: { id: string } }> {
+  return fetchJson(`/api/favorites/${productId}`, {
+    method: 'POST'
+  });
+}
+
+export async function removeFavorite(productId: string): Promise<{ success: boolean }> {
+  return fetchJson(`/api/favorites/${productId}`, {
+    method: 'DELETE'
+  });
+}
+
+export async function checkFavorite(productId: string): Promise<FavoriteCheckResponse> {
+  return fetchJson(`/api/favorites/check/${productId}`);
+}
+
+// ---------- Coupons ----------
+
+import type {
+  ValidateCouponResponse,
+  CustomerNotificationsResponse,
+  UnreadCountResponse
+} from '@jr/shared';
+
+export async function validateCoupon(data: {
+  code: string;
+  productId: string;
+  quantity?: number;
+}): Promise<ValidateCouponResponse> {
+  return fetchJson<ValidateCouponResponse>('/api/coupons/validate', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+// ---------- Customer Notifications ----------
+
+export async function getUnreadNotificationCount(): Promise<UnreadCountResponse> {
+  return fetchJson<UnreadCountResponse>('/api/notifications/unread-count');
+}
+
+export async function getCustomerNotifications(params?: {
+  page?: number;
+  pageSize?: number;
+  unreadOnly?: boolean;
+}): Promise<CustomerNotificationsResponse> {
+  const searchParams = new URLSearchParams();
+  if (params?.page) searchParams.set('page', String(params.page));
+  if (params?.pageSize) searchParams.set('pageSize', String(params.pageSize));
+  if (params?.unreadOnly) searchParams.set('unreadOnly', 'true');
+  const query = searchParams.toString();
+  return fetchJson<CustomerNotificationsResponse>(`/api/customer-notifications${query ? `?${query}` : ''}`);
+}
+
+export async function markNotificationRead(id: string): Promise<{ success: boolean }> {
+  return fetchJson(`/api/customer-notifications/${id}/read`, {
+    method: 'POST'
+  });
+}
+
+export async function markAllNotificationsRead(): Promise<{ success: boolean }> {
+  return fetchJson('/api/customer-notifications/read-all', {
+    method: 'POST'
   });
 }

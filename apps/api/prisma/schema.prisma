@@ -35,6 +35,7 @@ enum DeliveryType {
   DIGITAL_ACCOUNT
   MANUAL
   SMM
+  TOPUP
 }
 
 enum ProductStatus {
@@ -133,6 +134,25 @@ enum SmmOrderStatus {
   REFUNDED
 }
 
+enum TopUpProviderStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum TopUpProviderServiceStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum TopUpOrderStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+  REFUNDED
+}
+
 enum SupportTicketStatus {
   OPEN
   IN_PROGRESS
@@ -173,6 +193,10 @@ model User {
   lastName       String?
   photoUrl       String?
   languageCode   String?
+  /// Customer-chosen UI language persisted across restarts ('km' | 'en').
+  /// NULL until the customer picks a language from the Telegram bot.
+  /// Distinct from languageCode, which mirrors the Telegram client locale.
+  language       String?
   status         UserStatus      @default(ACTIVE)
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
@@ -183,6 +207,10 @@ model User {
   tickets        SupportTicket[]
   notifications  Notification[]
   securityEvents SecurityEvent[]
+  favorites          Favorite[]
+  couponUsages       CouponUsage[]
+  customerNotifications CustomerNotification[]
+  topUpVerifications TopUpVerification[]
 
   @@index([status])
   @@index([username])
@@ -257,6 +285,8 @@ model Category {
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
   products    Product[]
+  banners     Banner[]
+  restrictedCoupons Coupon[]
 
   @@index([isActive, isArchived, sortOrder])
 }
@@ -284,6 +314,7 @@ model Product {
   sortOrder          Int              @default(0)
   instructions       String?
   keywords           String[]         @default([])
+  isHandDelivery     Boolean          @default(false)
   createdAt          DateTime         @default(now())
   updatedAt          DateTime         @updatedAt
   category           Category         @relation(fields: [categoryId], references: [id], onDelete: Restrict)
@@ -291,7 +322,12 @@ model Product {
   stock              ProductStock[]
   licenses           License[]
   orderItems         OrderItem[]
-  smmService         SmmService?
+  smmServices        SmmService[]
+  manualDeliveries   ManualDelivery[]
+  bannerTargets      Banner[]
+  flashDeal          FlashDeal?
+  favorites          Favorite[]
+  restrictedCoupons  Coupon[]
 
   @@index([categoryId, status, isActive, sortOrder])
   @@index([isFeatured, status, isActive, sortOrder])
@@ -358,8 +394,11 @@ model Order {
   payments       Payment[]
   stock          ProductStock[]
   smmOrders      SmmOrder[]
+  topUpOrders    TopUpOrder[]
+  topUpVerifications TopUpVerification[]
   licenses       License[]
   tickets        SupportTicket[]
+  manualDeliveries ManualDelivery[]
 
   @@index([userId, createdAt])
   @@index([status, createdAt])
@@ -370,6 +409,7 @@ model OrderItem {
   orderId                   String             @db.Uuid
   productId                 String?            @db.Uuid
   variantId                 String?            @db.Uuid
+  topUpPackageId            String?            @db.Uuid
   productNameSnapshot       String
   unitPriceSnapshot         Decimal            @db.Decimal(18, 2)
   quantitySnapshot          Int
@@ -377,16 +417,27 @@ model OrderItem {
   currencySnapshot          String             @db.VarChar(3)
   deliveryTypeSnapshot      DeliveryType
   providerServiceIdSnapshot String?
+  providerIdSnapshot       String?            @db.Uuid
+  providerServiceExternalIdSnapshot String?
+  providerOfferIdSnapshot  String?
+  providerCostSnapshot     Decimal?           @db.Decimal(18, 2)
   target                    String?
+  serverId                  String?
+  customFieldValues         Json?
   createdAt                 DateTime           @default(now())
   order                     Order              @relation(fields: [orderId], references: [id], onDelete: Cascade)
   product                   Product?           @relation(fields: [productId], references: [id], onDelete: SetNull)
   variant                   ProductVariant?    @relation(fields: [variantId], references: [id], onDelete: SetNull)
+  topUpPackage              TopUpPackage?      @relation(fields: [topUpPackageId], references: [id], onDelete: SetNull)
   fulfillment               FulfillmentRecord?
   licenses                  License[]
+  manualDeliveries          ManualDelivery[]
+  topUpOrders               TopUpOrder[]
+  smmOrders                 SmmOrder[]
 
   @@index([orderId])
   @@index([productId])
+  @@index([topUpPackageId])
 }
 
 model FulfillmentRecord {
@@ -492,7 +543,7 @@ model SmmProvider {
 model SmmService {
   id                String           @id @default(uuid()) @db.Uuid
   providerId        String           @db.Uuid
-  productId         String?          @unique @db.Uuid
+  productId         String?          @db.Uuid
   providerServiceId String
   name              String
   providerCost      Decimal?         @db.Decimal(18, 2)
@@ -508,13 +559,214 @@ model SmmService {
 
   @@unique([providerId, providerServiceId])
   @@index([status])
+  @@index([productId, status])
+}
+
+// Top-Up Game — first-class entity linking provider, provider service, and customer config.
+// Replaces the ad-hoc "game" string on TopUpPackage.
+model TopUpGame {
+  id                   String                     @id @default(uuid()) @db.Uuid
+  name                 String                     @unique
+  imageUrl             String?
+  providerId           String?                    @db.Uuid
+  providerServiceId    String?                    @db.Uuid
+  isActive             Boolean                    @default(true)
+  sortOrder            Int                        @default(0)
+  createdAt            DateTime                   @default(now())
+  updatedAt            DateTime                   @updatedAt
+  provider             TopUpProvider?             @relation(fields: [providerId], references: [id], onDelete: SetNull)
+  providerService      TopUpProviderService?      @relation(fields: [providerServiceId], references: [id], onDelete: SetNull)
+  packages             TopUpPackage[]
+  gameConfig           TopUpGameConfig?
+
+  @@index([isActive, sortOrder])
+  @@index([providerId])
+  @@index([providerServiceId])
+}
+
+enum TopUpPackageNoteColor {
+  WARNING
+  INFO
+  SUCCESS
+  DANGER
+  PURPLE
+}
+
+model TopUpPackage {
+  id                    String                      @id @default(uuid()) @db.Uuid
+  gameId                String                      @db.Uuid
+  name                  String
+  diamondAmount         Int
+  // Customer-facing package content. Nullable for compatibility with legacy
+  // packages, which continue to use diamondAmount as their fallback.
+  content               String?
+  price                 Decimal                     @db.Decimal(18, 2)
+  currency              String                      @default("USD") @db.VarChar(3)
+  providerId            String?                     @db.Uuid
+  providerServiceId     String?                     @db.Uuid
+  providerOfferId       String?
+  providerCost          Decimal?                    @db.Decimal(18, 2)
+  isActive              Boolean                     @default(true)
+  sortOrder             Int                         @default(0)
+  icon                  String?
+  imageUrl              String?
+  customerNote          String?
+  noteColor             TopUpPackageNoteColor       @default(WARNING)
+  createdAt             DateTime                    @default(now())
+  updatedAt             DateTime                    @updatedAt
+  game                  TopUpGame                   @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  provider              TopUpProvider?              @relation(fields: [providerId], references: [id], onDelete: SetNull)
+  providerService       TopUpProviderService?       @relation(fields: [providerServiceId], references: [id], onDelete: SetNull)
+  orderItems            OrderItem[]
+  orders                TopUpOrder[]
+  verifications         TopUpVerification[]
+
+  @@index([gameId, isActive, sortOrder])
+  @@index([providerId, isActive])
+  @@index([providerServiceId])
+  @@index([providerOfferId])
+}
+
+// Per-game customer input configuration for Top-Up orders.
+// The Mini App renders these fields from the server; the backend re-validates
+// every required field when the order is created.
+enum TopUpInputValidation {
+  NUMERIC
+  TEXT
+}
+
+model TopUpGameConfig {
+  id                    String                @id @default(uuid()) @db.Uuid
+  gameId                String                @unique @db.Uuid
+  requirePlayerId       Boolean               @default(true)
+  requireServerId       Boolean               @default(false)
+  playerIdValidation    TopUpInputValidation  @default(TEXT)
+  serverIdValidation    TopUpInputValidation  @default(TEXT)
+  verificationEnabled   Boolean               @default(false)
+  allowUnverifiedPurchase Boolean             @default(false)
+  verificationProviderId String?              @db.Uuid
+  verificationServiceId  String?              @db.Uuid
+  customerNote          String?
+  customFields          Json? // [{ key, label, required, placeholder }]
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+  game                  TopUpGame             @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  verificationProvider  TopUpProvider?        @relation("VerificationProvider", fields: [verificationProviderId], references: [id], onDelete: SetNull)
+  verificationService   TopUpProviderService? @relation("VerificationService", fields: [verificationServiceId], references: [id], onDelete: SetNull)
+
+  @@index([gameId])
+}
+
+// Generic, provider-driven account verification for game top-ups.
+// One row per successful provider validation, bound to the customer, the
+// package and the exact verified field values (dynamic key/value map — no
+// per-game columns). A row is single-use: placing an order consumes it.
+// Changing any account field produces a different fieldsHash and can never
+// match an existing verification.
+enum TopUpVerificationStatus {
+  VALID
+  CONSUMED
+  SUPERSEDED
+}
+
+model TopUpVerification {
+  id                String                  @id @default(uuid()) @db.Uuid
+  userId            String                  @db.Uuid
+  packageId         String                  @db.Uuid
+  gameId            String                  @db.Uuid
+  providerId        String?                 @db.Uuid
+  providerServiceId String?                 @db.Uuid
+  categoryId        String
+  fields            Json
+  fieldsHash        String
+  status            TopUpVerificationStatus @default(VALID)
+  playerName        String?
+  verifiedAt        DateTime                @default(now())
+  expiresAt         DateTime
+  orderId           String?                 @db.Uuid
+  createdAt         DateTime                @default(now())
+  user              User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  package           TopUpPackage            @relation(fields: [packageId], references: [id], onDelete: Cascade)
+  order             Order?                  @relation(fields: [orderId], references: [id], onDelete: SetNull)
+
+  @@index([userId, packageId, status, expiresAt])
+  @@index([fieldsHash])
+}
+
+model TopUpProvider {
+  id                      String              @id @default(uuid()) @db.Uuid
+  name                    String              @unique
+  apiUrl                  String
+  encryptedApiKey         String
+  status                  TopUpProviderStatus @default(ACTIVE)
+  createdAt               DateTime            @default(now())
+  updatedAt               DateTime            @updatedAt
+  games                   TopUpGame[]
+  packages                TopUpPackage[]
+  orders                  TopUpOrder[]
+  services                TopUpProviderService[]
+  verificationGameConfigs TopUpGameConfig[]   @relation("VerificationProvider")
+
+  @@index([status])
+}
+
+model TopUpProviderService {
+  id                 String                      @id @default(uuid()) @db.Uuid
+  providerId         String                      @db.Uuid
+  providerServiceId  String
+  name               String
+  status             TopUpProviderServiceStatus  @default(ACTIVE)
+  createdAt          DateTime                    @default(now())
+  updatedAt          DateTime                    @updatedAt
+  provider           TopUpProvider               @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  games              TopUpGame[]
+  packages           TopUpPackage[]
+  orders             TopUpOrder[]
+  verificationGameConfigs TopUpGameConfig[]      @relation("VerificationService")
+
+  @@unique([providerId, providerServiceId])
+  @@index([status])
+  @@index([providerId])
+}
+
+model TopUpOrder {
+  id                   String                       @id @default(uuid()) @db.Uuid
+  orderId              String                       @db.Uuid
+  orderItemId          String?                      @db.Uuid
+  topUpPackageId       String                       @db.Uuid
+  providerId           String                       @db.Uuid
+  providerServiceId    String?                      @db.Uuid
+  providerServiceExternalId String?
+  providerOfferId      String?
+  providerRequestKey   String?                      @unique
+  providerRequestStatus String                       @default("NOT_STARTED")
+  providerOrderId      String?                      @unique
+  target               String
+  serverId             String?
+  customFieldValues    Json?
+  quantity             Int
+  status               TopUpOrderStatus             @default(PENDING)
+  lastProviderStatus   String?
+  createdAt            DateTime                     @default(now())
+  updatedAt            DateTime                     @updatedAt
+  order                Order                        @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  orderItem            OrderItem?                   @relation(fields: [orderItemId], references: [id], onDelete: SetNull)
+  package              TopUpPackage                 @relation(fields: [topUpPackageId], references: [id], onDelete: Restrict)
+  provider             TopUpProvider                @relation(fields: [providerId], references: [id], onDelete: Restrict)
+  providerService      TopUpProviderService?        @relation(fields: [providerServiceId], references: [id], onDelete: SetNull)
+
+  @@index([status, updatedAt])
+  @@index([orderId])
+  @@index([orderItemId])
 }
 
 model SmmOrder {
   id                 String         @id @default(uuid()) @db.Uuid
   orderId            String         @db.Uuid
+  orderItemId        String?        @db.Uuid
   smmServiceId       String         @db.Uuid
   providerId         String         @db.Uuid
+  providerRequestKey String?        @unique
   providerOrderId    String?        @unique
   target             String
   quantity           Int
@@ -523,11 +775,13 @@ model SmmOrder {
   createdAt          DateTime       @default(now())
   updatedAt          DateTime       @updatedAt
   order              Order          @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  orderItem          OrderItem?     @relation(fields: [orderItemId], references: [id], onDelete: SetNull)
   service            SmmService     @relation(fields: [smmServiceId], references: [id], onDelete: Restrict)
   provider           SmmProvider    @relation(fields: [providerId], references: [id], onDelete: Restrict)
 
   @@index([status, updatedAt])
   @@index([orderId])
+  @@index([orderItemId])
 }
 
 model License {
@@ -548,6 +802,29 @@ model License {
   @@index([productId, status])
   @@index([orderId])
   @@index([orderItemId])
+}
+
+// Application-owned media asset registry.
+//
+// Every image uploaded through Admin (game logos, banner artwork, package
+// icons…) is written to permanent server-owned storage and registered here.
+// The public URL stored on records (games, banners, …) is the stable,
+// origin-agnostic path `/api/media/<filename>` — it never expires, is never
+// rewritten by cache/CDN behavior, and can only be removed by an explicit
+// admin delete of THIS row (which refuses while any record still references
+// the file). Nothing else in the system ever deletes media files or clears
+// imageUrl values: not schedules (banner endAt), not image load failures
+// (HTTP 404/onError), not restarts, not background workers.
+model MediaAsset {
+  id               String   @id @default(uuid()) @db.Uuid
+  filename         String   @unique
+  mimeType         String
+  sizeBytes        Int
+  sha256           String
+  createdByAdminId String?  @db.Uuid
+  createdAt        DateTime @default(now())
+
+  @@index([createdAt])
 }
 
 model SupportTicket {
@@ -651,4 +928,157 @@ model ApplicationSetting {
   isSecret    Boolean  @default(false)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+}
+
+enum BannerTargetType {
+  HOME
+  CATEGORY
+  PRODUCT
+  PROMOTION
+  PAGE
+}
+
+model Banner {
+  id                String           @id @default(uuid()) @db.Uuid
+  title             String
+  subtitle          String?
+  imageUrl          String?
+  buttonText        String?
+  buttonDestination String?
+  targetType        BannerTargetType @default(HOME)
+  targetCategoryId  String?          @db.Uuid
+  targetProductId   String?          @db.Uuid
+  targetPage        String?
+  isActive          Boolean          @default(true)
+  sortOrder         Int              @default(0)
+  startsAt          DateTime?
+  endsAt            DateTime?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  targetCategory    Category?        @relation(fields: [targetCategoryId], references: [id], onDelete: SetNull)
+  targetProduct     Product?         @relation(fields: [targetProductId], references: [id], onDelete: SetNull)
+
+  @@index([isActive, sortOrder])
+  @@index([targetType, isActive, sortOrder])
+  @@index([startsAt, endsAt])
+}
+
+enum FlashDealDiscountType {
+  PERCENTAGE
+  FIXED
+}
+
+model FlashDeal {
+  id            String                  @id @default(uuid()) @db.Uuid
+  productId     String                  @db.Uuid
+  discountType  FlashDealDiscountType   @default(PERCENTAGE)
+  discountValue Decimal                 @db.Decimal(18, 2)
+  salePrice     Decimal                 @db.Decimal(18, 2)
+  isActive      Boolean                 @default(true)
+  sortOrder     Int                     @default(0)
+  startsAt      DateTime?
+  endsAt        DateTime?
+  createdAt     DateTime                @default(now())
+  updatedAt     DateTime                @updatedAt
+  product       Product                 @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([productId])
+  @@index([isActive, sortOrder])
+  @@index([startsAt, endsAt])
+  @@index([isActive, startsAt, endsAt])
+}
+
+model Favorite {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @db.Uuid
+  productId String   @db.Uuid
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, productId])
+  @@index([userId, createdAt])
+  @@index([productId])
+}
+
+model ManualDelivery {
+  id            String    @id @default(uuid()) @db.Uuid
+  orderItemId   String    @unique @db.Uuid
+  orderId       String    @db.Uuid
+  productId     String    @db.Uuid
+  title         String
+  content       String
+  deliveredBy   String?   @db.Uuid
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  orderItem     OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+  order         Order     @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  product       Product   @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@index([orderId])
+  @@index([orderItemId])
+}
+
+enum CouponDiscountType {
+  PERCENTAGE
+  FIXED
+}
+
+model Coupon {
+  id                    String              @id @default(uuid()) @db.Uuid
+  code                  String              @unique
+  discountType          CouponDiscountType  @default(PERCENTAGE)
+  discountValue         Decimal             @db.Decimal(18, 2)
+  minimumOrderAmount    Decimal?            @db.Decimal(18, 2)
+  maximumDiscountAmount Decimal?            @db.Decimal(18, 2)
+  startAt               DateTime?
+  endAt                 DateTime?
+  usageLimit            Int?
+  perUserLimit          Int?                @default(1)
+  isActive              Boolean             @default(true)
+  restrictedProductId   String?             @db.Uuid
+  restrictedCategoryId  String?             @db.Uuid
+  usageCount            Int                 @default(0)
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+  restrictedProduct     Product?            @relation(fields: [restrictedProductId], references: [id], onDelete: SetNull)
+  restrictedCategory    Category?           @relation(fields: [restrictedCategoryId], references: [id], onDelete: SetNull)
+  usages                CouponUsage[]
+
+  @@index([code])
+  @@index([isActive])
+  @@index([isActive, startAt, endAt])
+}
+
+model CouponUsage {
+  id        String   @id @default(uuid()) @db.Uuid
+  couponId  String   @db.Uuid
+  userId    String   @db.Uuid
+  orderId   String   @db.Uuid
+  amount    Decimal  @db.Decimal(18, 2)
+  createdAt DateTime @default(now())
+  coupon    Coupon   @relation(fields: [couponId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([couponId, orderId])
+  @@index([couponId, userId])
+  @@index([userId])
+}
+
+model CustomerNotification {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @db.Uuid
+  type      String
+  title     String
+  message   String
+  orderId   String?  @db.Uuid
+  productId String?  @db.Uuid
+  dedupeKey String?  @unique
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead])
+  @@index([userId, createdAt])
+  @@index([createdAt])
 }

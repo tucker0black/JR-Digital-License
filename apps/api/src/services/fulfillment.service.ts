@@ -1,5 +1,7 @@
 import type { PrismaClient, FulfillmentStatus } from '@prisma/client';
 import type { StockService } from './stock.service.js';
+import type { SmmService } from './smm/smm.service.js';
+import type { TopUpService } from './topup/topup.service.js';
 
 export interface FulfillmentResult {
   success: boolean;
@@ -17,7 +19,9 @@ export interface FulfillmentItem {
 export class FulfillmentService {
   constructor(
     private prisma: PrismaClient,
-    private stockService: StockService
+    private stockService: StockService,
+    private smmService?: SmmService,
+    private topUpService?: TopUpService
   ) {}
 
   async fulfillOrderItem(
@@ -28,7 +32,8 @@ export class FulfillmentService {
       where: { id: orderItemId },
       include: {
         order: true,
-        fulfillment: true
+        fulfillment: true,
+        product: { select: { isHandDelivery: true } }
       }
     });
 
@@ -44,6 +49,18 @@ export class FulfillmentService {
       if (orderItem.fulfillment.status === 'DELIVERED') {
         return { success: false, error: 'Order item already fulfilled' };
       }
+    }
+
+    if (orderItem.product?.isHandDelivery) {
+      return { success: false, error: 'Hand delivery items must be fulfilled manually by an admin' };
+    }
+
+    if (orderItem.deliveryTypeSnapshot === 'SMM') {
+      return this.fulfillSmmOrderItem(orderItemId);
+    }
+
+    if (orderItem.deliveryTypeSnapshot === 'TOPUP') {
+      return this.fulfillTopUpOrderItem(orderItemId);
     }
 
     const reservedStock = await this.stockService.getOrderStock(orderItem.order.id);
@@ -134,6 +151,23 @@ export class FulfillmentService {
         where: { id: order.id },
         data: { status: 'COMPLETED', completedAt: new Date() }
       });
+
+      // Create customer notification for order completion
+      try {
+        const productNames = order.items.map((item) => item.productNameSnapshot).join(', ');
+        await this.prisma.customerNotification.create({
+          data: {
+            userId: order.userId,
+            type: 'DELIVERY',
+            title: 'Order Completed',
+            message: `Your order #${order.orderNumber} for ${productNames} has been delivered successfully.`,
+            orderId: order.id,
+            dedupeKey: `order:${order.id}:DELIVERY`
+          }
+        });
+      } catch (error) {
+        console.error('Failed to create customer notification:', error);
+      }
     } else if (errors.length > 0) {
       await this.prisma.order.update({
         where: { id: order.id },
@@ -142,6 +176,112 @@ export class FulfillmentService {
     }
 
     return { success: errors.length === 0, fulfilledItems, errors };
+  }
+
+  private async fulfillSmmOrderItem(orderItemId: string): Promise<FulfillmentResult> {
+    const orderItem = await this.prisma.orderItem.findUnique({
+      where: { id: orderItemId },
+      include: { order: true }
+    });
+
+    if (!orderItem) {
+      return { success: false, error: 'Order item not found' };
+    }
+
+    if (!this.smmService) {
+      return { success: false, error: 'SMM fulfillment is not available' };
+    }
+
+    const result = await this.smmService.createSmmOrder(
+      orderItem.order.userId,
+      orderItem.order.id,
+      'SMM',
+      `fulfill_${orderItem.id}`
+    );
+
+    if (!result.success) {
+      return { success: false, error: result.error || 'Failed to submit SMM order to provider' };
+    }
+
+    const fulfillmentRecord = await this.prisma.fulfillmentRecord.upsert({
+      where: { orderItemId },
+      create: {
+        orderItemId,
+        status: 'DELIVERED',
+        deliveryRef: result.order?.id ?? `smm-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        deliveredAt: new Date(),
+        attemptCount: 1
+      },
+      update: {
+        status: 'DELIVERED',
+        deliveryRef: result.order?.id,
+        deliveredAt: new Date(),
+        attemptCount: { increment: 1 }
+      }
+    });
+
+    return {
+      success: true,
+      fulfillmentRecord: {
+        id: fulfillmentRecord.id,
+        status: fulfillmentRecord.status,
+        deliveredAt: fulfillmentRecord.deliveredAt
+      }
+    };
+  }
+
+  private async fulfillTopUpOrderItem(orderItemId: string): Promise<FulfillmentResult> {
+    const orderItem = await this.prisma.orderItem.findUnique({
+      where: { id: orderItemId },
+      include: { order: true }
+    });
+
+    if (!orderItem) {
+      return { success: false, error: 'Order item not found' };
+    }
+
+    if (!this.topUpService) {
+      return { success: false, error: 'Top-up fulfillment is not available' };
+    }
+
+    // Idempotent by design: the service refuses to submit the same order to
+    // the provider twice, so a duplicate payment callback or a retry can
+    // never create a second provider order.
+    const result = await this.topUpService.createTopUpOrder(
+      orderItem.order.userId,
+      orderItem.order.id,
+      `fulfill_${orderItem.id}`
+    );
+
+    if (!result.success) {
+      return { success: false, error: result.error || 'Failed to submit top-up order to provider' };
+    }
+
+    const fulfillmentRecord = await this.prisma.fulfillmentRecord.upsert({
+      where: { orderItemId },
+      create: {
+        orderItemId,
+        status: 'DELIVERED',
+        deliveryRef: result.order?.id ?? `topup-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        deliveredAt: new Date(),
+        attemptCount: 1
+      },
+      update: {
+        status: 'DELIVERED',
+        deliveryRef: result.order?.id,
+        deliveredAt: new Date(),
+        attemptCount: { increment: 1 }
+      }
+    });
+
+    return {
+      success: true,
+      fulfillmentRecord: {
+        id: fulfillmentRecord.id,
+        status: fulfillmentRecord.status,
+        deliveredAt: fulfillmentRecord.deliveredAt
+      }
+    };
   }
 
   async getFulfillmentStatus(orderItemId: string): Promise<{ status: FulfillmentStatus; deliveryRef: string | null; deliveredAt: Date | null } | null> {

@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import type { ReactNode } from 'react';
 
-type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger';
+type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger' | 'accent';
 type ButtonSize = 'sm' | 'md' | 'lg';
 
 interface ButtonProps {
@@ -16,17 +16,22 @@ interface ButtonProps {
 }
 
 const variantClasses: Record<ButtonVariant, string> = {
-  primary: 'bg-primary text-white hover:bg-primary-dark shadow-sm shadow-primary/20',
+  primary:
+    'bg-gradient-to-r from-primary to-violet text-white font-semibold shadow-blue-sm hover:shadow-blue hover:-translate-y-0.5 active:scale-[0.97]',
   secondary:
-    'border border-line bg-card text-ink hover:border-primary/40 hover:text-primary',
-  ghost: 'text-soft hover:bg-muted hover:text-primary',
-  danger: 'border border-danger/20 bg-danger/10 text-danger hover:bg-danger/20'
+    'border border-line/50 bg-card text-ink hover:border-primary/30 hover:text-primary hover:bg-primary-soft/30',
+  ghost:
+    'text-soft hover:bg-muted/60 hover:text-ink',
+  danger:
+    'border border-danger/20 bg-danger/10 text-danger hover:bg-danger/20 active:scale-[0.97]',
+  accent:
+    'bg-gradient-to-r from-accent to-violet text-white shadow-md shadow-accent/15 hover:shadow-lg hover:shadow-accent/25 active:scale-[0.97]',
 };
 
 const sizeClasses: Record<ButtonSize, string> = {
-  sm: 'h-9 px-3.5 text-xs',
-  md: 'h-11 px-5 text-sm',
-  lg: 'h-12 px-6 text-base'
+  sm: 'h-9 px-4 text-xs rounded-xl',
+  md: 'h-11 px-5 text-sm rounded-xl',
+  lg: 'h-12 px-6 text-base rounded-xl',
 };
 
 export function Button({
@@ -39,7 +44,7 @@ export function Button({
   disabled,
   onClick
 }: ButtonProps) {
-  const classes = `inline-flex items-center justify-center gap-2 rounded-xl font-semibold transition-all duration-150 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-50 ${variantClasses[variant]} ${sizeClasses[size]} ${className}`;
+  const classes = `inline-flex items-center justify-center gap-2 font-semibold transition-luxury disabled:pointer-events-none disabled:opacity-40 ${variantClasses[variant]} ${sizeClasses[size]} ${className}`;
 
   if (href) {
     return (

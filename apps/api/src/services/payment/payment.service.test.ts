@@ -20,6 +20,7 @@ class FakeQrProvider extends BasePaymentProvider {
   readonly providerType = 'KHQR' as const;
   private succeedOnVerify = false;
   private failOnVerify = false;
+  private pendingError = 'Waiting for payment';
 
   setSucceedOnVerify(value: boolean): void {
     this.succeedOnVerify = value;
@@ -29,6 +30,12 @@ class FakeQrProvider extends BasePaymentProvider {
   setFailOnVerify(value: boolean): void {
     this.failOnVerify = value;
     this.succeedOnVerify = false;
+  }
+
+  setPendingError(message: string): void {
+    this.pendingError = message;
+    this.succeedOnVerify = false;
+    this.failOnVerify = false;
   }
 
   async createPayment(params: CreatePaymentParams): Promise<CreatePaymentResult> {
@@ -56,7 +63,7 @@ class FakeQrProvider extends BasePaymentProvider {
         paidAt: new Date()
       };
     }
-    return { success: false, status: 'PENDING', error: 'Waiting for payment' };
+    return { success: false, status: 'PENDING', providerPaymentId: 'fakemd5abcdef0123456789abcdef0123', error: this.pendingError };
   }
 
   async getPaymentStatus(_params: GetPaymentStatusParams): Promise<GetPaymentStatusResult> {
@@ -605,6 +612,183 @@ describe('PaymentService', () => {
         (call) => call[0]?.data?.status === 'SUCCEEDED'
       );
       expect(succeededClaims).toHaveLength(2);
+    });
+  });
+
+  describe('cancelPayment (KHQR cancel/payment race)', () => {
+    it('cancels a genuinely pending payment after an authoritative recheck', async () => {
+      mock.prisma.payment.findUnique.mockResolvedValue(PAYMENT_ROW);
+      mock.prisma.productStock.findMany.mockResolvedValue([]);
+
+      const result = await service.cancelPayment('payment-1', 'user-1');
+
+      expect(result.success).toBe(true);
+      expect(result.status).toBe('EXPIRED');
+      expect(result.cancelled).toBe(true);
+      const expiredUpdates = mock.prisma.payment.updateMany.mock.calls.filter(
+        (call) => call[0]?.data?.status === 'EXPIRED'
+      );
+      expect(expiredUpdates).toHaveLength(1);
+      const draftUpdate = mock.prisma.order.update.mock.calls.find(
+        (call) => call[0]?.data?.status === 'DRAFT'
+      );
+      expect(draftUpdate).toBeDefined();
+    });
+
+    it('never lets a cancel turn an already SUCCEEDED payment back into an unpaid state', async () => {
+      mock.prisma.payment.findUnique.mockResolvedValue({ ...PAYMENT_ROW, status: 'SUCCEEDED', paidAt: new Date() });
+      const verifySpy = vi.spyOn(provider, 'verifyPayment');
+
+      const result = await service.cancelPayment('payment-1', 'user-1');
+
+      expect(result.success).toBe(true);
+      expect(result.paid).toBe(true);
+      expect(result.alreadyTerminal).toBe(true);
+      expect(verifySpy).not.toHaveBeenCalled();
+      expect(mock.prisma.payment.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('lets a server-verified payment win the race against a cancel request', async () => {
+      provider.setSucceedOnVerify(true);
+      mock.prisma.payment.findUnique.mockResolvedValue(PAYMENT_ROW);
+      mock.prisma.order.findUnique.mockResolvedValue(ORDER_ROW);
+      mock.prisma.productStock.findMany.mockResolvedValue([
+        { id: 'stock-1', orderId: 'order-1', status: 'RESERVED' }
+      ]);
+
+      const result = await service.cancelPayment('payment-1', 'user-1');
+
+      expect(result.success).toBe(true);
+      expect(result.status).toBe('SUCCEEDED');
+      expect(result.paid).toBe(true);
+      expect(result.cancelled).toBeUndefined();
+
+      const expiredUpdates = mock.prisma.payment.updateMany.mock.calls.filter(
+        (call) => call[0]?.data?.status === 'EXPIRED'
+      );
+      expect(expiredUpdates).toHaveLength(0);
+
+      const paidUpdates = mock.prisma.order.update.mock.calls.filter(
+        (call) => call[0]?.data?.status === 'PAID'
+      );
+      expect(paidUpdates).toHaveLength(1);
+
+      const soldUpdates = mock.prisma.productStock.updateMany.mock.calls.filter(
+        (call) => call[0]?.data?.status === 'SOLD'
+      );
+      expect(soldUpdates).toHaveLength(1);
+    });
+
+    it('refuses to cancel when the provider cannot confirm the payment is unpaid', async () => {
+      provider.setPendingError('Bakong provider connectivity is blocked');
+      mock.prisma.payment.findUnique.mockResolvedValue(PAYMENT_ROW);
+
+      const result = await service.cancelPayment('payment-1', 'user-1');
+
+      expect(result.success).toBe(false);
+      expect(result.status).toBe('PENDING');
+      expect(result.error).toContain('could not be confirmed');
+      const expiredUpdates = mock.prisma.payment.updateMany.mock.calls.filter(
+        (call) => call[0]?.data?.status === 'EXPIRED'
+      );
+      expect(expiredUpdates).toHaveLength(0);
+    });
+
+    it('cancelling an already cancelled payment is idempotent', async () => {
+      mock.prisma.payment.findUnique.mockResolvedValue({ ...PAYMENT_ROW, status: 'CANCELLED' });
+
+      const result = await service.cancelPayment('payment-1', 'user-1');
+
+      expect(result.success).toBe(true);
+      expect(result.status).toBe('CANCELLED');
+      expect(result.alreadyTerminal).toBe(true);
+      expect(mock.prisma.payment.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('reports an expired session as EXPIRED instead of cancelling it', async () => {
+      mock.prisma.payment.findUnique.mockResolvedValue({
+        ...PAYMENT_ROW,
+        expiresAt: new Date(Date.now() - 60_000)
+      });
+      mock.prisma.productStock.findMany.mockResolvedValue([]);
+
+      const result = await service.cancelPayment('payment-1', 'user-1');
+
+      expect(result.success).toBe(true);
+      expect(result.status).toBe('EXPIRED');
+      const expiredUpdates = mock.prisma.payment.updateMany.mock.calls.filter(
+        (call) => call[0]?.data?.status === 'EXPIRED'
+      );
+      expect(expiredUpdates).toHaveLength(1);
+    });
+
+    it('rejects cancellation of another users payment', async () => {
+      mock.prisma.payment.findUnique.mockResolvedValue({ ...PAYMENT_ROW, userId: 'other-user' });
+
+      const result = await service.cancelPayment('payment-1', 'user-1');
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Payment not found');
+    });
+
+    it('does not claim a payment that was paid after it was cancelled', async () => {
+      mock.prisma.payment.findUnique.mockResolvedValue({ ...PAYMENT_ROW, status: 'CANCELLED' });
+
+      const result = await service.verifyPayment('payment-1');
+
+      expect(result.success).toBe(false);
+      expect(result.status).toBe('CANCELLED');
+      expect(mock.prisma.payment.updateMany).not.toHaveBeenCalled();
+      expect(mock.prisma.order.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('createPayment (one QR per order)', () => {
+    it('never creates a second QR while the first payment is still active', async () => {
+      mock.prisma.payment.findUnique.mockResolvedValue(null);
+      mock.prisma.order.findUnique.mockResolvedValue(ORDER_ROW);
+      mock.prisma.payment.findFirst.mockResolvedValue({
+        ...PAYMENT_ROW,
+        amount: new Prisma.Decimal('2.60'),
+        expiresAt: new Date(Date.now() + 5 * 60 * 1000)
+      });
+
+      const result = await service.createPayment('user-1', 'order-1', 'KHQR', 'idem-race-1');
+
+      expect(result.success).toBe(true);
+      expect(result.resumed).toBe(true);
+      expect(mock.prisma.payment.create).not.toHaveBeenCalled();
+    });
+
+    it('only regenerates a QR when the previous payment is no longer active', async () => {
+      mock.prisma.payment.findUnique
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({
+          ...PAYMENT_ROW,
+          expiresAt: new Date(Date.now() - 60_000)
+        });
+      mock.prisma.order.findUnique.mockResolvedValue(ORDER_ROW);
+      mock.prisma.payment.findFirst.mockResolvedValue({
+        ...PAYMENT_ROW,
+        amount: new Prisma.Decimal('2.60'),
+        expiresAt: new Date(Date.now() - 60_000)
+      });
+      mock.prisma.productStock.findMany.mockResolvedValue([]);
+      mock.prisma.payment.create.mockResolvedValue({
+        ...PAYMENT_ROW,
+        amount: new Prisma.Decimal('2.60'),
+        reference: 'pay-new'
+      });
+
+      const result = await service.createPayment('user-1', 'order-1', 'KHQR', 'idem-race-2');
+
+      expect(result.success).toBe(true);
+      expect(result.resumed).toBeUndefined();
+      expect(mock.prisma.payment.create).toHaveBeenCalledTimes(1);
+      const expiredUpdates = mock.prisma.payment.updateMany.mock.calls.filter(
+        (call) => call[0]?.data?.status === 'EXPIRED'
+      );
+      expect(expiredUpdates).toHaveLength(1);
     });
   });
 

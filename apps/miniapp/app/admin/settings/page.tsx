@@ -9,6 +9,7 @@ import {
   deleteAdminNotificationTarget,
   getAdminNotificationTargets,
   getAdminSettings,
+  testAdminNotificationTarget,
   updateAdminNotificationTarget,
   updateAdminSetting
 } from '@/lib/api-admin';
@@ -129,6 +130,7 @@ function NotificationTargetsCard({ targets, onChanged }: {
   const [eventTypes, setEventTypes] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [testResult, setTestResult] = useState<{ id: string; success: boolean; error: string | null } | null>(null);
 
   const create = async () => {
     setError(null);
@@ -144,6 +146,16 @@ function NotificationTargetsCard({ targets, onChanged }: {
       setError(humanizeError('Unable to create setting', err));
     } finally {
       setBusy(false);
+    }
+  };
+
+  const testTarget = async (target: { id: string; chatId: string; name: string }) => {
+    setTestResult(null);
+    try {
+      const result = await testAdminNotificationTarget(target.id);
+      setTestResult({ id: target.id, success: result.success, error: result.error });
+    } catch (err) {
+      setTestResult({ id: target.id, success: false, error: humanizeError('Unable to send test message', err) });
     }
   };
 
@@ -232,11 +244,17 @@ function NotificationTargetsCard({ targets, onChanged }: {
               <td className="px-3 py-2">{target.isActive ? <Badge tone="success">Active</Badge> : <Badge tone="muted">Disabled</Badge>}</td>
               <td className="px-3 py-2">
                 <div className="flex gap-1.5">
+                  <Button variant="ghost" onClick={() => void testTarget(target)}>Test</Button>
                   <Button variant="ghost" onClick={() => toggleActive(target.id, target.isActive)}>
                     {target.isActive ? 'Disable' : 'Enable'}
                   </Button>
                   <Button variant="danger" onClick={() => remove(target.id)}>Delete</Button>
                 </div>
+                {testResult && testResult.id === target.id && (
+                  <p className={`mt-1 text-xs ${testResult.success ? 'text-emerald-400' : 'text-red-400'}`}>
+                    {testResult.success ? 'Test message sent to this chat.' : `Test failed: ${testResult.error}`}
+                  </p>
+                )}
               </td>
             </tr>
           ))}

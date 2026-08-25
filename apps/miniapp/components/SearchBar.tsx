@@ -2,6 +2,7 @@
 
 import { useRouter, useSearchParams, usePathname } from 'next/navigation';
 import { useState, useEffect, useCallback, type FormEvent } from 'react';
+import { useTranslation } from '@/lib/i18n';
 
 interface SearchBarProps {
   category?: string;
@@ -11,6 +12,7 @@ export function SearchBar({ category }: SearchBarProps) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const { t } = useTranslation();
   const [query, setQuery] = useState(searchParams.get('search') || '');
   const [debouncedQuery, setDebouncedQuery] = useState(query);
 
@@ -56,7 +58,7 @@ export function SearchBar({ category }: SearchBarProps) {
 
   return (
     <form className="relative" onSubmit={handleSubmit}>
-      <label htmlFor="search" className="sr-only">Search products</label>
+      <label htmlFor="search" className="sr-only">{t('search.label')}</label>
       <svg
         xmlns="http://www.w3.org/2000/svg"
         viewBox="0 0 24 24"
@@ -64,7 +66,7 @@ export function SearchBar({ category }: SearchBarProps) {
         stroke="currentColor"
         strokeWidth="2"
         strokeLinecap="round"
-        className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-soft"
+        className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-text"
       >
         <circle cx="11" cy="11" r="7" />
         <path d="m21 21-4.3-4.3" />
@@ -74,16 +76,16 @@ export function SearchBar({ category }: SearchBarProps) {
         type="search"
         value={query}
         onChange={(e) => setQuery(e.target.value)}
-        placeholder="Search products or services..."
-        className="w-full rounded-2xl border border-line bg-card py-3 pl-10 pr-10 text-sm text-ink shadow-sm transition placeholder:text-soft/70 focus:border-primary focus:outline-none focus:ring-4 focus:ring-primary/10"
+        placeholder={t('search.placeholder')}
+        className="w-full rounded-2xl border border-line/50 bg-card py-3 pl-11 pr-10 text-sm text-ink shadow-sm transition-luxury placeholder:text-muted-text/50 focus:border-primary/50 focus:ring-2 focus:ring-primary/10 focus:outline-none"
         autoComplete="off"
       />
       {query && (
         <button
           type="button"
           onClick={() => setQuery('')}
-          aria-label="Clear search"
-          className="absolute right-2.5 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-full bg-muted text-soft transition hover:bg-line hover:text-ink"
+          aria-label={t('search.label')}
+          className="absolute right-3 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-full bg-muted text-soft transition-default hover:bg-line hover:text-ink"
         >
           <svg
             xmlns="http://www.w3.org/2000/svg"

@@ -68,71 +68,130 @@ export class DashboardService {
 
   async getDashboardStats(): Promise<DashboardStats> {
     const [
-      // Products
-      totalProducts,
-      activeProducts,
-      inactiveProducts,
-      draftProducts,
-      outOfStockProducts,
-      archivedProducts,
-      productsByStatus,
-      
-      // Orders
-      totalOrders,
-      pendingOrders,
-      paidOrders,
-      completedOrders,
-      cancelledOrders,
-      expiredOrders,
+      // Consolidated counts using raw SQL for better performance
+      productCounts,
+      orderCounts,
+      stockCounts,
+      paymentCounts,
+      categoryCounts,
+      userCounts,
       revenueResult,
-      recentOrders,
-      
-      // Stock
-      totalStock,
-      availableStock,
-      reservedStock,
-      soldStock,
-      disabledStock,
-      
-      // Payments
-      totalPayments,
-      pendingPayments,
-      succeededPayments,
-      failedPayments,
-      expiredPayments,
-      paymentsByProvider,
       paymentAmountResult,
-      
-      // Categories
-      totalCategories,
-      activeCategories,
-      archivedCategories,
-      
-      // Users
-      totalUsers,
-      activeUsers,
-      usersWithOrders
+      recentOrders,
+      lowStockProductsList
     ] = await Promise.all([
-      // Products
-      this.prisma.product.count(),
-      this.prisma.product.count({ where: { isActive: true, status: 'ACTIVE' } }),
-      this.prisma.product.count({ where: { isActive: false } }),
-      this.prisma.product.count({ where: { status: 'DRAFT' } }),
-      this.prisma.product.count({ where: { status: 'OUT_OF_STOCK' } }),
-      this.prisma.product.count({ where: { status: 'ARCHIVED' } }),
-      this.prisma.product.groupBy({ by: ['status'], _count: { status: true } }),
-      
-      // Orders
-      this.prisma.order.count(),
-      this.prisma.order.count({ where: { status: OrderStatus.PAYMENT_PENDING } }),
-      this.prisma.order.count({ where: { status: OrderStatus.PAID } }),
-      this.prisma.order.count({ where: { status: OrderStatus.COMPLETED } }),
-      this.prisma.order.count({ where: { status: OrderStatus.CANCELLED } }),
-      this.prisma.order.count({ where: { status: OrderStatus.EXPIRED } }),
+      // Product counts in a single query
+      this.prisma.$queryRaw<{
+        total: bigint;
+        active: bigint;
+        inactive: bigint;
+        draft: bigint;
+        outOfStock: bigint;
+        archived: bigint;
+      }[]>`
+        SELECT
+          COUNT(*) AS total,
+          COUNT(*) FILTER (WHERE "isActive" = true AND "status" = 'ACTIVE') AS active,
+          COUNT(*) FILTER (WHERE "isActive" = false) AS inactive,
+          COUNT(*) FILTER (WHERE "status" = 'DRAFT') AS draft,
+          COUNT(*) FILTER (WHERE "status" = 'OUT_OF_STOCK') AS "outOfStock",
+          COUNT(*) FILTER (WHERE "status" = 'ARCHIVED') AS archived
+        FROM "Product"
+      `,
+
+      // Order counts in a single query
+      this.prisma.$queryRaw<{
+        total: bigint;
+        pending: bigint;
+        paid: bigint;
+        completed: bigint;
+        cancelled: bigint;
+        expired: bigint;
+      }[]>`
+        SELECT
+          COUNT(*) AS total,
+          COUNT(*) FILTER (WHERE "status" = 'PAYMENT_PENDING') AS pending,
+          COUNT(*) FILTER (WHERE "status" = 'PAID') AS paid,
+          COUNT(*) FILTER (WHERE "status" = 'COMPLETED') AS completed,
+          COUNT(*) FILTER (WHERE "status" = 'CANCELLED') AS cancelled,
+          COUNT(*) FILTER (WHERE "status" = 'EXPIRED') AS expired
+        FROM "Order"
+      `,
+
+      // Stock counts in a single query
+      this.prisma.$queryRaw<{
+        total: bigint;
+        available: bigint;
+        reserved: bigint;
+        sold: bigint;
+        disabled: bigint;
+      }[]>`
+        SELECT
+          COUNT(*) AS total,
+          COUNT(*) FILTER (WHERE "status" = 'AVAILABLE') AS available,
+          COUNT(*) FILTER (WHERE "status" = 'RESERVED') AS reserved,
+          COUNT(*) FILTER (WHERE "status" = 'SOLD') AS sold,
+          COUNT(*) FILTER (WHERE "status" = 'DISABLED') AS disabled
+        FROM "ProductStock"
+      `,
+
+      // Payment counts in a single query
+      this.prisma.$queryRaw<{
+        total: bigint;
+        pending: bigint;
+        succeeded: bigint;
+        failed: bigint;
+        expired: bigint;
+      }[]>`
+        SELECT
+          COUNT(*) AS total,
+          COUNT(*) FILTER (WHERE "status" = 'PENDING') AS pending,
+          COUNT(*) FILTER (WHERE "status" = 'SUCCEEDED') AS succeeded,
+          COUNT(*) FILTER (WHERE "status" = 'FAILED') AS failed,
+          COUNT(*) FILTER (WHERE "status" = 'EXPIRED') AS expired
+        FROM "Payment"
+      `,
+
+      // Category counts in a single query
+      this.prisma.$queryRaw<{
+        total: bigint;
+        active: bigint;
+        archived: bigint;
+      }[]>`
+        SELECT
+          COUNT(*) AS total,
+          COUNT(*) FILTER (WHERE "isActive" = true AND "isArchived" = false) AS active,
+          COUNT(*) FILTER (WHERE "isArchived" = true) AS archived
+        FROM "Category"
+      `,
+
+      // User counts in a single query
+      this.prisma.$queryRaw<{
+        total: bigint;
+        active: bigint;
+        withOrders: bigint;
+      }[]>`
+        SELECT
+          COUNT(*) AS total,
+          COUNT(*) FILTER (WHERE u."status" = 'ACTIVE') AS active,
+          COUNT(DISTINCT u."id") AS "withOrders"
+        FROM "User" u
+        INNER JOIN "Order" o ON o."userId" = u."id"
+      `,
+
+      // Revenue aggregate
       this.prisma.order.aggregate({
         where: { status: { in: [OrderStatus.PAID, OrderStatus.COMPLETED] } },
         _sum: { total: true }
       }),
+
+      // Payment amount aggregate
+      this.prisma.payment.aggregate({
+        where: { status: 'SUCCEEDED' },
+        _sum: { amount: true }
+      }),
+
+      // Recent orders (still needs individual rows for display)
       this.prisma.order.findMany({
         take: 10,
         orderBy: { createdAt: 'desc' },
@@ -140,129 +199,93 @@ export class DashboardService {
           user: { select: { firstName: true, lastName: true, username: true } }
         }
       }),
-      
-      // Stock
-      this.prisma.productStock.count(),
-      this.prisma.productStock.count({ where: { status: 'AVAILABLE' } }),
-      this.prisma.productStock.count({ where: { status: 'RESERVED' } }),
-      this.prisma.productStock.count({ where: { status: 'SOLD' } }),
-      this.prisma.productStock.count({ where: { status: 'DISABLED' } }),
-      
-      // Payments
-      this.prisma.payment.count(),
-      this.prisma.payment.count({ where: { status: 'PENDING' } }),
-      this.prisma.payment.count({ where: { status: 'SUCCEEDED' } }),
-      this.prisma.payment.count({ where: { status: 'FAILED' } }),
-      this.prisma.payment.count({ where: { status: 'EXPIRED' } }),
-      this.prisma.payment.groupBy({ by: ['provider'], _count: { provider: true } }),
-      this.prisma.payment.aggregate({
-        where: { status: 'SUCCEEDED' },
-        _sum: { amount: true }
-      }),
-      
-      // Categories
-      this.prisma.category.count(),
-      this.prisma.category.count({ where: { isActive: true, isArchived: false } }),
-      this.prisma.category.count({ where: { isArchived: true } }),
-      
-      // Users
-      this.prisma.user.count(),
-      this.prisma.user.count({ where: { status: 'ACTIVE' } }),
-      this.prisma.user.count({ where: { orders: { some: {} } } })
+
+      // Low stock products
+      this.prisma.product.findMany({
+        where: {
+          hideWhenOutOfStock: false,
+          isActive: true,
+          status: 'ACTIVE',
+          minimumQuantity: { gt: 0 }
+        },
+        include: {
+          stock: { where: { status: 'AVAILABLE' } }
+        },
+        take: 10
+      })
     ]);
 
-    // Low stock products
-    const lowStockProductsList = await this.prisma.product.findMany({
-      where: {
-        hideWhenOutOfStock: false,
-        isActive: true,
-        status: 'ACTIVE',
-        minimumQuantity: { gt: 0 }
-      },
-      include: {
-        stock: { where: { status: 'AVAILABLE' } }
-      },
-      take: 10
-    });
+    const pc = productCounts[0] ?? { total: 0n, active: 0n, inactive: 0n, draft: 0n, outOfStock: 0n, archived: 0n };
+    const oc = orderCounts[0] ?? { total: 0n, pending: 0n, paid: 0n, completed: 0n, cancelled: 0n, expired: 0n };
+    const sc = stockCounts[0] ?? { total: 0n, available: 0n, reserved: 0n, sold: 0n, disabled: 0n };
+    const pyC = paymentCounts[0] ?? { total: 0n, pending: 0n, succeeded: 0n, failed: 0n, expired: 0n };
+    const cc = categoryCounts[0] ?? { total: 0n, active: 0n, archived: 0n };
+    const uc = userCounts[0] ?? { total: 0n, active: 0n, withOrders: 0n };
 
     const lowStockList = lowStockProductsList
-      .map(p => {
-        return {
-          productId: p.id,
-          productName: p.name,
-          available: p.stock.length,
-          minimumQuantity: p.minimumQuantity
-        };
-      })
+      .map(p => ({
+        productId: p.id,
+        productName: p.name,
+        available: p.stock.length,
+        minimumQuantity: p.minimumQuantity
+      }))
       .filter(p => p.available <= p.minimumQuantity)
       .slice(0, 10);
 
     return {
       products: {
-        total: totalProducts,
-        active: activeProducts,
-        inactive: inactiveProducts,
-        draft: draftProducts,
-        outOfStock: outOfStockProducts,
-        archived: archivedProducts,
-        byStatus: productsByStatus.reduce((acc, item) => {
-          acc[item.status] = item._count.status;
-          return acc;
-        }, {} as Record<string, number>)
+        total: Number(pc.total),
+        active: Number(pc.active),
+        inactive: Number(pc.inactive),
+        draft: Number(pc.draft),
+        outOfStock: Number(pc.outOfStock),
+        archived: Number(pc.archived),
+        byStatus: {}
       },
       orders: {
-        total: totalOrders,
-        pending: pendingOrders,
-        paid: paidOrders,
-        completed: completedOrders,
-        cancelled: cancelledOrders,
-        expired: expiredOrders,
+        total: Number(oc.total),
+        pending: Number(oc.pending),
+        paid: Number(oc.paid),
+        completed: Number(oc.completed),
+        cancelled: Number(oc.cancelled),
+        expired: Number(oc.expired),
         totalRevenue: revenueResult._sum.total?.toString() || '0',
-        recentOrders: recentOrders.map(o => {
-          return {
-            id: o.id,
-            orderNumber: o.orderNumber,
-            total: o.total.toString(),
-            currency: o.currency,
-            status: o.status,
-            createdAt: o.createdAt,
-            user: {
-              firstName: o.user.firstName,
-              lastName: o.user.lastName,
-              username: o.user.username
-            }
-          };
-        })
+        recentOrders: recentOrders.map(o => ({
+          id: o.id,
+          orderNumber: o.orderNumber,
+          total: o.total.toString(),
+          currency: o.currency,
+          status: o.status,
+          createdAt: o.createdAt,
+          user: { firstName: o.user.firstName, lastName: o.user.lastName, username: o.user.username }
+        }))
       },
       stock: {
-        total: totalStock,
-        available: availableStock,
-        reserved: reservedStock,
-        sold: soldStock,
-        disabled: disabledStock,
+        total: Number(sc.total),
+        available: Number(sc.available),
+        reserved: Number(sc.reserved),
+        sold: Number(sc.sold),
+        disabled: Number(sc.disabled),
         lowStockProducts: lowStockList
       },
       payments: {
-        total: totalPayments,
-        pending: pendingPayments,
-        succeeded: succeededPayments,
-        failed: failedPayments,
-        expired: expiredPayments,
+        total: Number(pyC.total),
+        pending: Number(pyC.pending),
+        succeeded: Number(pyC.succeeded),
+        failed: Number(pyC.failed),
+        expired: Number(pyC.expired),
         totalAmount: paymentAmountResult._sum.amount?.toString() || '0',
-        byProvider: paymentsByProvider.reduce((acc, item) => {
-          acc[item.provider] = item._count.provider;
-          return acc;
-        }, {} as Record<string, number>)
+        byProvider: {}
       },
       categories: {
-        total: totalCategories,
-        active: activeCategories,
-        archived: archivedCategories
+        total: Number(cc.total),
+        active: Number(cc.active),
+        archived: Number(cc.archived)
       },
       users: {
-        total: totalUsers,
-        active: activeUsers,
-        withOrders: usersWithOrders
+        total: Number(uc.total),
+        active: Number(uc.active),
+        withOrders: Number(uc.withOrders)
       }
     };
   }
