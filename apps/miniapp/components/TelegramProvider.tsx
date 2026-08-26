@@ -17,8 +17,13 @@ function wait(milliseconds: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 }
 
-async function waitForTelegramWebApp(): Promise<NonNullable<Window['Telegram']>['WebApp'] | undefined> {
-  for (let attempt = 0; attempt < 30; attempt += 1) {
+const FAST_WAIT_MS = 3_000;
+const SLOW_POLL_INTERVAL_MS = 1_000;
+const SLOW_POLL_DURATION_MS = 30_000;
+
+async function waitForTelegramWebApp(timeoutMs: number): Promise<NonNullable<Window['Telegram']>['WebApp'] | undefined> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
     const webApp = window.Telegram?.WebApp;
     if (webApp) return webApp;
     await wait(100);
@@ -54,13 +59,25 @@ export function TelegramProvider({ children }: { children: React.ReactNode }) {
         return;
       }
 
-      const webApp = await waitForTelegramWebApp();
+      let webApp = await waitForTelegramWebApp(FAST_WAIT_MS);
       if (cancelled) return;
 
       if (!webApp?.initData) {
         logSafeTelegramRuntime(webApp);
+        // Slow Telegram WebViews can inject the bridge late. Show the
+        // unavailable state now but keep re-checking briefly so the app
+        // recovers by itself instead of requiring a manual reopen.
         setStatus('unavailable');
-        return;
+        const slowDeadline = Date.now() + SLOW_POLL_DURATION_MS;
+        while (!cancelled && Date.now() < slowDeadline) {
+          await wait(SLOW_POLL_INTERVAL_MS);
+          if (cancelled) return;
+          webApp = window.Telegram?.WebApp;
+          if (webApp?.initData) break;
+        }
+        if (cancelled) return;
+        if (!webApp?.initData) return;
+        logSafeTelegramRuntime(webApp);
       }
 
       webApp.ready?.();
