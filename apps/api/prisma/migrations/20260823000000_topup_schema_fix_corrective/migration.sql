@@ -97,18 +97,31 @@ CREATE INDEX IF NOT EXISTS "TopUpGameConfig_gameId_idx" ON "TopUpGameConfig"("ga
 -- ============================================================
 -- 6. RENAME TopUpPackage INDEXES from "TopUpPackage_new_*" to proper names
 -- ============================================================
--- These were created by the failed migration that tried to rename the table
-DO $$ BEGIN
-    ALTER INDEX IF EXISTS "TopUpPackage_new_gameId_isActive_sortOrder_idx" RENAME TO "TopUpPackage_gameId_isActive_sortOrder_idx";
-EXCEPTION WHEN undefined_object THEN NULL; END $$;
+-- These were created by the failed migration that tried to rename the table.
+-- Rename only when the target index does not exist AND the source does.
+DO $$
+BEGIN
+    IF to_regclass('"TopUpPackage_gameId_isActive_sortOrder_idx"') IS NULL
+       AND to_regclass('"TopUpPackage_new_gameId_isActive_sortOrder_idx"') IS NOT NULL THEN
+        ALTER INDEX "TopUpPackage_new_gameId_isActive_sortOrder_idx" RENAME TO "TopUpPackage_gameId_isActive_sortOrder_idx";
+    END IF;
+END $$;
 
-DO $$ BEGIN
-    ALTER INDEX IF EXISTS "TopUpPackage_new_providerId_isActive_idx" RENAME TO "TopUpPackage_providerId_isActive_idx";
-EXCEPTION WHEN undefined_object THEN NULL; END $$;
+DO $$
+BEGIN
+    IF to_regclass('"TopUpPackage_providerId_isActive_idx"') IS NULL
+       AND to_regclass('"TopUpPackage_new_providerId_isActive_idx"') IS NOT NULL THEN
+        ALTER INDEX "TopUpPackage_new_providerId_isActive_idx" RENAME TO "TopUpPackage_providerId_isActive_idx";
+    END IF;
+END $$;
 
-DO $$ BEGIN
-    ALTER INDEX IF EXISTS "TopUpPackage_new_pkey" RENAME TO "TopUpPackage_pkey";
-EXCEPTION WHEN undefined_object THEN NULL; END $$;
+DO $$
+BEGIN
+    IF to_regclass('"TopUpPackage_pkey"') IS NULL
+       AND to_regclass('"TopUpPackage_new_pkey"') IS NOT NULL THEN
+        ALTER INDEX "TopUpPackage_new_pkey" RENAME TO "TopUpPackage_pkey";
+    END IF;
+END $$;
 
 -- Ensure FK constraints exist on TopUpPackage
 DO $$ BEGIN
