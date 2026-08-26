@@ -1,0 +1,41 @@
+# syntax=docker/dockerfile:1
+
+# Dedicated Railway image for @jr/api.
+#
+# Railway only auto-reads config files named exactly railway.json /
+# railway.toml; per-service files such as railway.api.json are ignored. When
+# no build target is selected, Docker builds the FINAL stage of the file, so
+# the api stage here must stay last. That guarantees the image always ends up
+# with WORKDIR /app/apps/api and CMD ["node", "dist/index.js"], regardless of
+# what target is (or is not) selected in the Railway dashboard.
+
+FROM node:22-bookworm-slim AS build
+
+WORKDIR /app
+
+ENV CI=true
+
+RUN corepack enable && corepack prepare pnpm@10.5.2 --activate
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY apps/api/package.json ./apps/api/package.json
+COPY apps/bot/package.json ./apps/bot/package.json
+COPY apps/miniapp/package.json ./apps/miniapp/package.json
+COPY packages/shared/package.json ./packages/shared/package.json
+
+RUN pnpm install --frozen-lockfile
+
+COPY . .
+
+RUN pnpm --filter @jr/shared build
+RUN pnpm --filter @jr/api db:generate
+RUN pnpm --filter @jr/api build
+
+# Keep this stage LAST: it is both the explicit "api" target and the default.
+FROM build AS api
+
+WORKDIR /app/apps/api
+
+ENV NODE_ENV=production
+
+CMD ["node", "dist/index.js"]
