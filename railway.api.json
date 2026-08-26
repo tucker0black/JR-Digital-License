@@ -4,5 +4,8 @@
     "builder": "DOCKERFILE",
     "dockerfilePath": "deploy/vps/Dockerfile",
     "dockerBuildTarget": "api"
+  },
+  "deploy": {
+    "startCommand": "node dist/index.js"
   }
 }
