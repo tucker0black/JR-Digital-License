@@ -12,4 +12,6 @@ EXCEPTION
 END $$;
 
 -- Alter noteColor column to use enum
+ALTER TABLE "TopUpPackage" ALTER COLUMN "noteColor" DROP DEFAULT;
 ALTER TABLE "TopUpPackage" ALTER COLUMN "noteColor" TYPE "TopUpPackageNoteColor" USING "noteColor"::"TopUpPackageNoteColor";
+ALTER TABLE "TopUpPackage" ALTER COLUMN "noteColor" SET DEFAULT 'WARNING';
