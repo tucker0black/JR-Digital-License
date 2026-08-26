@@ -44,4 +44,7 @@ WORKDIR /app/apps/api
 
 ENV NODE_ENV=production
 
-CMD ["node", "dist/index.js"]
+# Apply pending migrations (non-destructive `migrate deploy`) before serving
+# so a fresh deploy can never serve against a stale schema. Failing fast lets
+# the platform surface the outage instead of serving 500s.
+CMD ["sh", "-c", "pnpm exec prisma migrate deploy && node dist/index.js"]
