@@ -363,6 +363,24 @@ export function buildApp() {
     timestamp: new Date().toISOString()
   }));
 
+  // Connectivity-only diagnostic for deployments. Reports reachability and,
+  // on failure, only the Prisma error class/code (never connection details).
+  app.get('/api/health/database', async (request, reply) => {
+    try {
+      await prisma.$queryRaw`SELECT 1`;
+      return { status: 'ok' as const, database: 'reachable' as const };
+    } catch (error) {
+      const err = error as { name?: string; code?: string };
+      request.log.warn({ code: err.code }, 'Database health check failed');
+      return reply.status(503).send({
+        status: 'error' as const,
+        database: 'unreachable' as const,
+        errorName: err.name ?? 'UnknownError',
+        errorCode: err.code ?? null
+      });
+    }
+  });
+
   // ==================== INTERNAL BOT API ====================
   const isBotSecretValid = (request: { headers: Record<string, string | string[] | undefined> }): boolean => {
     const secret = process.env.BOT_SECRET;
