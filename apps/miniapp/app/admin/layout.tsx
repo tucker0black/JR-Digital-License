@@ -32,6 +32,8 @@ export default function AdminLayout({ children }: Readonly<{ children: React.Rea
   const router = useRouter();
   const pathname = usePathname();
   const [authorized, setAuthorized] = useState(false);
+  const [authError, setAuthError] = useState<'server' | 'network' | null>(null);
+  const [retryNonce, setRetryNonce] = useState(0);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [ticketUnread, setTicketUnread] = useState(0);
   const [pendingHandDelivery, setPendingHandDelivery] = useState(0);
@@ -44,6 +46,8 @@ export default function AdminLayout({ children }: Readonly<{ children: React.Rea
       return;
     }
 
+    setAuthError(null);
+
     // Use the lightweight auth-check endpoint instead of the heavy
     // dashboard-stats call.  The check endpoint only validates the token
     // which is O(1) in the database.
@@ -55,12 +59,16 @@ export default function AdminLayout({ children }: Readonly<{ children: React.Rea
         if (cancelled) return;
         if (isAdminApiError(error) && (error.status === 401 || error.status === 403)) {
           adminLogout();
+          router.replace('/admin/login');
+          return;
         }
-        router.replace('/admin/login');
+        // Server outage / timeout / connectivity problem. Never leave the
+        // operator stuck on the spinner and never blame the admin token.
+        setAuthError(isAdminApiError(error) ? 'server' : 'network');
       });
 
     return () => { cancelled = true; };
-  }, [router]);
+  }, [router, retryNonce]);
 
   useEffect(() => {
     if (!authorized) return;
@@ -139,6 +147,37 @@ export default function AdminLayout({ children }: Readonly<{ children: React.Rea
   };
 
   if (pathname === '/admin/login') return <>{children}</>;
+
+  if (authError) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-page px-4 text-ink">
+        <div className="w-full max-w-sm rounded-2xl border border-line/50 bg-card p-6 text-center shadow-lg">
+          <p className="text-base font-bold tracking-premium">Admin authentication failed.</p>
+          <p className="mt-2 text-sm text-soft">
+            {authError === 'network'
+              ? 'Cannot reach JR Digital license. Check your internet connection.'
+              : 'The admin service is temporarily unavailable. Please try again.'}
+          </p>
+          <div className="mt-5 flex gap-2">
+            <button
+              type="button"
+              onClick={() => setRetryNonce((n) => n + 1)}
+              className="flex-1 rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-white transition-luxury hover:bg-primary-dark active:scale-[0.98]"
+            >
+              Retry
+            </button>
+            <button
+              type="button"
+              onClick={() => { adminLogout(); router.replace('/admin/login'); }}
+              className="flex-1 rounded-xl border border-line/40 px-4 py-2.5 text-sm font-medium text-soft transition-luxury hover:text-ink active:scale-[0.98]"
+            >
+              Go to login
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (!authorized) {
     return (

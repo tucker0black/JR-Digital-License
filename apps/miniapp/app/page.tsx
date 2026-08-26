@@ -2,7 +2,7 @@
 
 import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { getBanners, getCategories, getFlashDeals, getMeHome, getOrders, getProducts } from '@/lib/api';
+import { classifyApiFailure, getBanners, getCategories, getFlashDeals, getMeHome, getOrders, getProducts } from '@/lib/api';
 import type { Category, CustomerBanner, CustomerFlashDeal, MeHomeResponse, Order, Product } from '@/lib/api';
 import { ProductCard } from '@/components/ProductCard';
 import { SearchBar } from '@/components/SearchBar';
@@ -35,7 +35,7 @@ export default function HomePage() {
   const [currency, setCurrency] = useState('USD');
   const [loading, setLoading] = useState(true);
   const [catalogError, setCatalogError] = useState<string | null>(null);
-  const [walletError, setWalletError] = useState<string | null>(null);
+  const [walletError, setWalletError] = useState<'auth' | 'server' | 'network' | null>(null);
   const homeLoadStarted = useRef(false);
 
   const loadHomeData = useCallback(() => {
@@ -51,13 +51,17 @@ export default function HomePage() {
     const load = <T,>(
       request: Promise<T>,
       onSuccess: (result: T) => void,
-      onFailure?: () => void
+      onFailure?: (error: unknown) => void
     ) => {
-      void request.then(onSuccess).catch(() => onFailure?.()).finally(settle);
+      void request.then(onSuccess).catch((error) => onFailure?.(error)).finally(settle);
     };
 
-    const catalogFailed = () => {
-      setCatalogError(t('auth.failed'));
+    const catalogFailed = (error: unknown) => {
+      setCatalogError(
+        classifyApiFailure(error) === 'network'
+          ? t('errors.connectionDown')
+          : t('errors.serviceDown')
+      );
     };
 
     load(
@@ -98,7 +102,7 @@ export default function HomePage() {
         setBalance(result.wallet.balance);
         setCurrency(result.wallet.currency);
       },
-      () => setWalletError(t('auth.failed'))
+      (error) => setWalletError(classifyApiFailure(error))
     );
   }, [t]);
 
@@ -161,7 +165,12 @@ export default function HomePage() {
               <div>
                 <div className="flex flex-wrap items-center gap-2">
                   <p className="text-lg font-bold leading-tight text-white">
-                    {displayName ?? (walletError ? t('auth.accountUnavailable') : t('auth.loadingAccount'))}
+                    {displayName ??
+                      (walletError
+                        ? walletError === 'auth'
+                          ? t('auth.accountUnavailable')
+                          : t('errors.accountServiceDown')
+                        : t('auth.loadingAccount'))}
                   </p>
                   {profile?.accountStatus && (
                     <span className="inline-flex items-center gap-1 rounded-lg bg-white/20 px-2 py-0.5 text-[10px] font-semibold text-white backdrop-blur-sm">
@@ -170,7 +179,13 @@ export default function HomePage() {
                   )}
                 </div>
                 <p className="text-sm text-white/70">
-                  {profile?.username ? `@${profile.username}` : walletError ? t('auth.authError') : t('auth.loadingProfile')}
+                  {profile?.username
+                    ? `@${profile.username}`
+                    : walletError
+                      ? walletError === 'auth'
+                        ? t('auth.authError')
+                        : t('errors.serviceDown')
+                      : t('auth.loadingProfile')}
                 </p>
                 <p className="mt-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-white/40">
                   {appName}

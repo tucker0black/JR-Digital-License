@@ -115,7 +115,8 @@ async function adminFetch<T>(
   path: string,
   init?: RequestInit,
   tokenOverride?: string,
-  storage: AdminTokenStorage = browserTokenStorage
+  storage: AdminTokenStorage = browserTokenStorage,
+  timeoutMs?: number
 ): Promise<T> {
   const token = tokenOverride ?? storage.getItem(ADMIN_TOKEN_COOKIE);
   if (!token) {
@@ -130,7 +131,21 @@ async function adminFetch<T>(
   }
   headers['Authorization'] = `Bearer ${token}`;
 
-  const response = await fetch(`${API_BASE}${path}`, { ...init, headers });
+  // Guard rails so a hung backend can never freeze admin UI forever.
+  const signal =
+    timeoutMs && typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function'
+      ? AbortSignal.timeout(timeoutMs)
+      : init?.signal ?? undefined;
+
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE}${path}`, { ...init, headers, signal });
+  } catch (error) {
+    if (error instanceof DOMException && (error.name === 'TimeoutError' || error.name === 'AbortError')) {
+      throw new AdminApiError('The server did not respond in time. Please try again.', 504);
+    }
+    throw error;
+  }
 
   if (!response.ok) {
     const body = (await response.json().catch(() => ({}))) as { error?: string; message?: string };
@@ -155,7 +170,7 @@ function buildQuery<T extends object>(params: T): string {
 // ---------- Auth ----------
 
 export async function adminLogin(token: string, storage?: AdminTokenStorage): Promise<DashboardStats> {
-  const stats = await adminFetch<DashboardStats>('/api/admin/dashboard', {}, token, storage);
+  const stats = await adminFetch<DashboardStats>('/api/admin/dashboard', {}, token, storage, 15_000);
   setAdminToken(token, storage);
   return stats;
 }
@@ -167,7 +182,7 @@ export function adminLogout(): void {
 // ---------- Auth check ----------
 
 export function checkAdminAuth(): Promise<{ ok: boolean }> {
-  return adminFetch<{ ok: boolean }>('/api/admin/auth/check');
+  return adminFetch<{ ok: boolean }>('/api/admin/auth/check', {}, undefined, undefined, 10_000);
 }
 
 // ---------- Dashboard ----------

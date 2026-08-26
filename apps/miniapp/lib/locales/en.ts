@@ -465,6 +465,12 @@ const en = {
     newUser: '🆕 New User',
     existingUser: '🟢 Existing User',
   },
+  // Infrastructure/server failures (never blame Telegram authentication)
+  errors: {
+    serviceDown: 'Service temporarily unavailable.',
+    connectionDown: 'Cannot reach JR Digital license. Check your internet connection.',
+    accountServiceDown: 'Account details unavailable',
+  },
   // Language
   lang: {
     en: 'English',

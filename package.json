@@ -4,12 +4,16 @@
   "private": true,
   "packageManager": "pnpm@10.5.2",
   "engines": {
-    "node": "22.x",
+    "node": ">=22",
     "pnpm": "10.5.2"
   },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "scripts": {
     "build": "corepack pnpm --recursive run build",
-    "start": "node apps/bot/dist/index.js",
+    "start": "node deploy/mango/start.mjs",
     "dev": "corepack pnpm --parallel --stream --filter @jr/api --filter @jr/bot --filter @jr/miniapp run dev",
     "typecheck": "corepack pnpm --recursive run typecheck",
     "lint": "eslint .",

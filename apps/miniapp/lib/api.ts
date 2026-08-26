@@ -91,6 +91,23 @@ export class ApiError extends Error {
   }
 }
 
+export type ApiFailureKind = 'auth' | 'server' | 'network';
+
+/**
+ * Distinguishes real Telegram authentication failures (the API rejected the
+ * initData) from server-side outages (HTTP 5xx) and connectivity problems,
+ * so the UI never blames Telegram authentication for an infrastructure
+ * failure.
+ */
+export function classifyApiFailure(error: unknown): ApiFailureKind {
+  if (error instanceof TypeError) return 'network';
+  if (error instanceof ApiError) {
+    if (error.status === 401 || error.status === 403) return 'auth';
+    if (error.status === undefined || error.status >= 500) return 'server';
+  }
+  return 'server';
+}
+
 async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
   let initData: string | null = null;
 

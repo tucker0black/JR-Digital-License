@@ -467,6 +467,12 @@ const km: TranslationKeys = {
     newUser: '🆕 អ្នកប្រើប្រាស់ថ្មី',
     existingUser: '🟢 អ្នកប្រើប្រាស់បច្ចុប្បន្ន',
   },
+  // បញ្ហាបរិស្ថាន/ម៉ាស៊ីនបម្រើ (មិនដាក់ពិន្ទុ Telegram authentication ទេ)
+  errors: {
+    serviceDown: 'សេវាកម្មមិនអាចប្រើប្រាស់បានខ្លះទៅ។',
+    connectionDown: 'មិនអាចតភ្ជាប់ទៅ JR Digital license បានទេ។ សូមពិនិត្យអ៊ីនធឺណិតរបស់អ្នក។',
+    accountServiceDown: 'ព័ត៌មានគណនីមិនអាចប្រើប្រាស់បាន',
+  },
   // Language
   lang: {
     en: 'English',
