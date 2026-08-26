@@ -17,6 +17,12 @@ ENV CI=true
 
 RUN corepack enable && corepack prepare pnpm@10.5.2 --activate
 
+# Prisma engines need OpenSSL present; the slim image otherwise makes Prisma
+# fall back to a guessed "openssl-1.1.x" and log engine warnings at runtime.
+RUN apt-get update -y \
+    && apt-get install -y --no-install-recommends openssl \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps/api/package.json ./apps/api/package.json
 COPY apps/bot/package.json ./apps/bot/package.json
