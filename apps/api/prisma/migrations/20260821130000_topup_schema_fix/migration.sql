@@ -82,7 +82,7 @@ BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM pg_constraint 
         WHERE conname = 'TopUpGame_providerId_fkey' 
-        AND conrelid = 'TopUpGame'::regclass
+        AND conrelid = '"TopUpGame"'::regclass
     ) THEN
         ALTER TABLE "TopUpGame" ADD CONSTRAINT "TopUpGame_providerId_fkey" FOREIGN KEY ("providerId") REFERENCES "TopUpProvider"("id") ON DELETE SET NULL ON UPDATE CASCADE;
     END IF;
