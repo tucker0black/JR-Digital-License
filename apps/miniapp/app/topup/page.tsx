@@ -613,6 +613,11 @@ export default function TopUpPage() {
                             ⚠ {t('topUp.verifyNotAvailable')}
                           </div>
                         )}
+                        {verificationInfo?.applicable && verificationInfo.allowUnverifiedPurchase && !verificationInfo.verificationAvailable && (
+                          <div className="rounded-xl border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-warning">
+                            ⚠ {t('topUp.verifyUnavailableForGame')}
+                          </div>
+                        )}
                         {playerIdRequired && (
                           <div>
                             <label htmlFor="topup-target" className="mb-1.5 block text-sm font-medium text-soft">
