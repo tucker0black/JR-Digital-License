@@ -3,6 +3,7 @@ import type { PrismaClient, PaymentProvider as PrismaPaymentProvider } from '@pr
 import { Prisma } from '@prisma/client';
 import { ManualPaymentProvider } from './manual-provider.js';
 import { BakongPaymentProvider } from './bakong-provider.js';
+import { PayWayPaymentProvider } from './payway-provider.js';
 import type { BasePaymentProvider, VerifyPaymentParams} from './provider.js';
 import type { CustomerWalletService } from '../wallet.service.js';
 import type { TelegramNotificationService } from '../notifications/telegram-notification.service.js';
@@ -18,6 +19,7 @@ export class DefaultPaymentProviderFactory implements PaymentProviderFactory {
     this.providers.set('MANUAL', new ManualPaymentProvider());
     this.providers.set('BAKONG', new BakongPaymentProvider());
     this.providers.set('KHQR', new BakongPaymentProvider());
+    this.providers.set('ABA_PAYWAY', new PayWayPaymentProvider());
   }
 
   getProvider(type: PrismaPaymentProvider): BasePaymentProvider {
@@ -55,6 +57,7 @@ export interface CreatePaymentResult {
     merchantName?: string;
     amount?: string;
     currency?: string;
+    abapayDeeplink?: string;
   };
   error?: string;
 }
@@ -249,7 +252,10 @@ export class PaymentService {
         qrCodeImage: providerResult.qrCodeImage,
         merchantName: providerResult.merchantName,
         amount: payment.amount.toFixed(2),
-        currency: payment.currency
+        currency: payment.currency,
+        abapayDeeplink: typeof providerResult.metadata?.abapayDeeplink === 'string'
+          ? providerResult.metadata.abapayDeeplink
+          : undefined
       }
     };
   }
@@ -294,7 +300,7 @@ export class PaymentService {
       return { success: false, error: 'Payment with this idempotency key already exists' };
     }
 
-    const provider = 'KHQR' as PrismaPaymentProvider;
+    const provider = 'ABA_PAYWAY' as PrismaPaymentProvider;
     const providerInstance = this.factory.getProvider(provider);
     if (!providerInstance.isAvailable()) {
       return { success: false, error: providerInstance.getAvailabilityError() };
@@ -406,6 +412,23 @@ export class PaymentService {
   }): CreatePaymentResult {
     const metadata = (payment.metadata ?? {}) as Record<string, unknown>;
 
+    const qrCodeData =
+      (typeof metadata.qrString === 'string' && metadata.qrString) ||
+      (typeof metadata.qrCode === 'string' && metadata.qrCode) ||
+      undefined;
+
+    const qrCodeImage =
+      (typeof metadata.qrCodeImage === 'string' && metadata.qrCodeImage) ||
+      undefined;
+
+    const merchantName =
+      (typeof metadata.merchantName === 'string' && metadata.merchantName) ||
+      undefined;
+
+    const abapayDeeplink =
+      (typeof metadata.abapayDeeplink === 'string' && metadata.abapayDeeplink) ||
+      undefined;
+
     return {
       success: true,
       resumed: true,
@@ -414,11 +437,12 @@ export class PaymentService {
         reference: payment.reference,
         providerPaymentId: payment.providerPaymentId ?? undefined,
         expiresAt: payment.expiresAt ?? undefined,
-        qrCodeData: typeof metadata.qrCode === 'string' ? metadata.qrCode : undefined,
-        qrCodeImage: typeof metadata.qrCodeImage === 'string' ? metadata.qrCodeImage : undefined,
-        merchantName: typeof metadata.merchantName === 'string' ? metadata.merchantName : undefined,
+        qrCodeData,
+        qrCodeImage,
+        merchantName,
         amount: payment.amount.toFixed(2),
-        currency: payment.currency
+        currency: payment.currency,
+        abapayDeeplink
       }
     };
   }

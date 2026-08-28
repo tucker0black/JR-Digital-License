@@ -10,7 +10,7 @@ export interface PaymentPanelProps {
   orderNumber?: number;
   orderTotal: string;
   orderCurrency: string;
-  provider?: 'KHQR';
+  provider?: 'ABA_PAYWAY';
   autoCreate?: boolean;
 }
 
@@ -23,6 +23,7 @@ interface PaymentInfo {
   qrCodeData?: string;
   qrCodeImage?: string;
   merchantName?: string;
+  abapayDeeplink?: string;
 }
 
 const TERMINAL_STATUSES = ['SUCCEEDED', 'FAILED', 'EXPIRED', 'CANCELLED'];
@@ -50,7 +51,7 @@ export function PaymentPanel({
   orderNumber,
   orderTotal,
   orderCurrency,
-  provider = 'KHQR',
+  provider = 'ABA_PAYWAY',
   autoCreate = false
 }: PaymentPanelProps) {
   const { t } = useTranslation();
@@ -268,10 +269,19 @@ export function PaymentPanel({
         <div className="flex flex-col items-center gap-2">
           <QrDisplay
             value={payment.qrCodeImage ?? payment.qrCodeData}
-            alt={`KHQR payment for order ${orderNumber !== undefined ? `#${orderNumber}` : ''}`}
+            alt={`ABA PayWay payment for order ${orderNumber !== undefined ? `#${orderNumber}` : ''}`}
           />
           <p className="text-xs text-soft">{t('payment.scanInstruction')}</p>
         </div>
+      )}
+
+      {payment.abapayDeeplink && (
+        <a
+          href={payment.abapayDeeplink}
+          className="block rounded-xl bg-gradient-to-r from-primary to-violet px-4 py-3 text-center font-semibold text-white shadow-md shadow-primary/20 transition-default hover:shadow-lg active:scale-95"
+        >
+          {t('payment.payWithAbaMobile')}
+        </a>
       )}
 
       {payment.paymentUrl && (
@@ -279,7 +289,7 @@ export function PaymentPanel({
           href={payment.paymentUrl}
           target="_blank"
           rel="noopener noreferrer"
-          className="block rounded-xl bg-gradient-to-r from-primary to-violet px-4 py-3 text-center font-semibold text-white shadow-md shadow-primary/20 transition-default hover:shadow-lg active:scale-95"
+          className="block rounded-xl border border-line bg-card px-4 py-3 text-center font-medium text-ink transition-default hover:border-primary/40"
         >
           {t('wallet.openPaymentPage')}
         </a>

@@ -347,6 +347,7 @@ export interface CreatePaymentResponse {
     merchantName?: string;
     amount?: string;
     currency?: string;
+    abapayDeeplink?: string;
   };
   resumed?: boolean;
 }
