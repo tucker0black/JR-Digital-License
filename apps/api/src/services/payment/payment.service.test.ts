@@ -75,6 +75,75 @@ class FakeQrProvider extends BasePaymentProvider {
   }
 }
 
+class FakePayWayProvider extends BasePaymentProvider {
+  readonly name = 'Fake ABA PayWay Provider';
+  readonly providerType = 'ABA_PAYWAY' as const;
+  private succeedOnVerify = false;
+  private failOnVerify = false;
+  private pendingError = 'Waiting for payment';
+
+  setSucceedOnVerify(value: boolean): void {
+    this.succeedOnVerify = value;
+    this.failOnVerify = false;
+  }
+
+  setFailOnVerify(value: boolean): void {
+    this.failOnVerify = value;
+    this.succeedOnVerify = false;
+  }
+
+  setPendingError(message: string): void {
+    this.pendingError = message;
+    this.succeedOnVerify = false;
+    this.failOnVerify = false;
+  }
+
+  async createPayment(params: CreatePaymentParams): Promise<CreatePaymentResult> {
+    return {
+      success: true,
+      reference: params.reference,
+      providerPaymentId: 'pw-tran-123456',
+      expiresAt: params.expiresAt,
+      qrCodeData: '00020101021230450012ABA0015KHQR02030405060708',
+      qrCodeImage: 'data:image/png;base64,UkVNT1ZFRF9QYXlXZXlfUVE=',
+      paymentUrl: 'https://checkout-sandbox.payway.com.kh/qr/pw-123',
+      metadata: {
+        tranId: 'pw-tran-123456',
+        reqTime: '20260828120000',
+        qrString: '00020101021230450012ABA0015KHQR02030405060708',
+        qrCodeImage: 'data:image/png;base64,UkVNT1ZFRF9QYXlXZXlfUVE=',
+        abapayDeeplink: 'abamobilebank://ababank.com?type=payway&qrcode=pw-123',
+        checkoutQrUrl: 'https://checkout-sandbox.payway.com.kh/qr/pw-123',
+        environment: 'sandbox'
+      }
+    };
+  }
+
+  async verifyPayment(_params: VerifyPaymentParams): Promise<VerifyPaymentResult> {
+    if (this.failOnVerify) {
+      return { success: false, status: 'FAILED', providerPaymentId: 'fakemd5abcdef0123456789abcdef0123', error: 'Payment failed' };
+    }
+    if (this.succeedOnVerify) {
+      return {
+        success: true,
+        status: 'SUCCEEDED',
+        providerPaymentId: 'fakemd5abcdef0123456789abcdef0123',
+        providerTransactionHash: 'provider-hash-1',
+        paidAt: new Date()
+      };
+    }
+    return { success: false, status: 'PENDING', providerPaymentId: 'fakemd5abcdef0123456789abcdef0123', error: this.pendingError };
+  }
+
+  async getPaymentStatus(_params: GetPaymentStatusParams): Promise<GetPaymentStatusResult> {
+    return { success: true, status: 'PENDING' };
+  }
+
+  async expirePayment(_params: ExpirePaymentParams): Promise<ExpirePaymentResult> {
+    return { success: true };
+  }
+}
+
 function makeMockPrisma() {
   const prisma = {
     payment: {
@@ -146,6 +215,7 @@ const PAYMENT_ROW = {
 describe('PaymentService', () => {
   let factory: DefaultPaymentProviderFactory;
   let provider: FakeQrProvider;
+  let payWayProvider: FakePayWayProvider;
   let walletService: { creditDeposit: ReturnType<typeof vi.fn> };
   let mock: ReturnType<typeof makeMockPrisma>;
   let service: PaymentService;
@@ -159,7 +229,9 @@ describe('PaymentService', () => {
     mock.prisma.payment.updateMany.mockResolvedValue({ count: 1 });
     factory = new DefaultPaymentProviderFactory();
     provider = new FakeQrProvider();
+    payWayProvider = new FakePayWayProvider();
     factory.registerProvider('KHQR', provider);
+    factory.registerProvider('ABA_PAYWAY', payWayProvider);
     walletService = { creditDeposit: vi.fn().mockResolvedValue(undefined) };
     service = new PaymentService(mock.prisma, factory, walletService as unknown as CustomerWalletService);
   });
@@ -178,7 +250,7 @@ describe('PaymentService', () => {
       const result = await service.createDepositPayment('user-1', '5.00', 'USD', 'idem-dep-1');
 
       expect(result.success).toBe(true);
-      expect(result.payment?.qrCodeData).toBe('0002010102122930012345678901234');
+      expect(result.payment?.qrCodeData).toBe('00020101021230450012ABA0015KHQR02030405060708');
       expect(result.payment?.qrCodeImage).toMatch(/^data:image\/png;base64,/);
       expect(result.payment?.reference).toBe('dep-1');
       expect(result.payment?.expiresAt).toBeInstanceOf(Date);
@@ -268,7 +340,7 @@ describe('PaymentService', () => {
         reference: `dep-${expected}`,
         idempotencyKey: `idem-${expected}`
       });
-      const createSpy = vi.spyOn(provider, 'createPayment');
+      const createSpy = vi.spyOn(payWayProvider, 'createPayment');
 
       const result = await service.createDepositPayment('user-1', input, 'USD', `idem-${expected}`);
 
@@ -789,6 +861,144 @@ describe('PaymentService', () => {
         (call) => call[0]?.data?.status === 'EXPIRED'
       );
       expect(expiredUpdates).toHaveLength(1);
+    });
+
+    it('returns qrString from metadata when resuming an ABA_PAYWAY payment', async () => {
+      mock.prisma.payment.findUnique.mockResolvedValue(null);
+      mock.prisma.order.findUnique.mockResolvedValue(ORDER_ROW);
+      const payWayMetadata = {
+        tranId: 'tran-123',
+        reqTime: '20260828120000',
+        qrString: '00020101021230450012ABA0015KHQR02030405060708',
+        abapayDeeplink: 'https://abapay.example.com/deeplink',
+        checkoutQrUrl: 'https://checkout-sandbox.payway.com.kh/qr/tran-123',
+        environment: 'sandbox'
+      };
+      mock.prisma.payment.findFirst.mockResolvedValue({
+        ...PAYMENT_ROW,
+        provider: 'ABA_PAYWAY',
+        amount: new Prisma.Decimal('2.60'),
+        metadata: payWayMetadata,
+        expiresAt: new Date(Date.now() + 5 * 60 * 1000)
+      });
+
+      const result = await service.createPayment('user-1', 'order-1', 'ABA_PAYWAY', 'idem-resume-pw');
+
+      expect(result.success).toBe(true);
+      expect(result.resumed).toBe(true);
+      expect(result.payment?.qrCodeData).toBe(payWayMetadata.qrString);
+      expect(result.payment?.qrCodeData).not.toBeUndefined();
+      expect(mock.prisma.payment.create).not.toHaveBeenCalled();
+    });
+
+    it('falls back to metadata.qrCode when resuming a KHQR payment', async () => {
+      mock.prisma.payment.findUnique.mockResolvedValue(null);
+      mock.prisma.order.findUnique.mockResolvedValue(ORDER_ROW);
+      const khqrMetadata = {
+        qrCode: '0002010102122930012345678901234',
+        qrCodeImage: 'data:image/png;base64,ZmFrZWltYWdl',
+        merchantName: 'JR Digital'
+      };
+      mock.prisma.payment.findFirst.mockResolvedValue({
+        ...PAYMENT_ROW,
+        provider: 'KHQR',
+        amount: new Prisma.Decimal('2.60'),
+        metadata: khqrMetadata,
+        expiresAt: new Date(Date.now() + 5 * 60 * 1000)
+      });
+
+      const result = await service.createPayment('user-1', 'order-1', 'KHQR', 'idem-resume-khqr');
+
+      expect(result.success).toBe(true);
+      expect(result.resumed).toBe(true);
+      expect(result.payment?.qrCodeData).toBe(khqrMetadata.qrCode);
+      expect(result.payment?.qrCodeImage).toBe(khqrMetadata.qrCodeImage);
+      expect(result.payment?.merchantName).toBe(khqrMetadata.merchantName);
+    });
+  });
+
+  describe('ABA_PAYWAY provider integration', () => {
+    it('createPayment returns PayWay QR fields (qrCodeData, qrCodeImage, abapayDeeplink, checkoutQrUrl)', async () => {
+      mock.prisma.payment.findUnique.mockResolvedValue(null);
+      mock.prisma.order.findUnique.mockResolvedValue(ORDER_ROW);
+      mock.prisma.payment.findFirst.mockResolvedValue(null);
+      mock.prisma.payment.create.mockResolvedValue(PAYMENT_ROW);
+
+      const result = await service.createPayment('user-1', 'order-1', 'ABA_PAYWAY', 'idem-pw-order');
+
+      expect(result.success).toBe(true);
+      expect(result.payment?.qrCodeData).toBe('00020101021230450012ABA0015KHQR02030405060708');
+      expect(result.payment?.qrCodeImage).toBe('data:image/png;base64,UkVNT1ZFRF9QYXlXZXlfUVE=');
+      expect(result.payment?.abapayDeeplink).toBe('abamobilebank://ababank.com?type=payway&qrcode=pw-123');
+      expect(result.payment?.checkoutQrUrl).toBe('https://checkout-sandbox.payway.com.kh/qr/pw-123');
+      expect(result.payment?.paymentUrl).toBe('https://checkout-sandbox.payway.com.kh/qr/pw-123');
+    });
+
+    it('createDepositPayment returns PayWay QR fields (qrCodeData, qrCodeImage, abapayDeeplink, checkoutQrUrl)', async () => {
+      mock.prisma.payment.findUnique.mockResolvedValue(null);
+      mock.prisma.payment.findFirst.mockResolvedValue(null);
+      mock.prisma.payment.create.mockResolvedValue({ ...PAYMENT_ROW, orderId: null, reference: 'dep-pw-1', idempotencyKey: 'idem-dep-pw-1' });
+
+      const result = await service.createDepositPayment('user-1', '5.00', 'USD', 'idem-dep-pw-1');
+
+      expect(result.success).toBe(true);
+      expect(result.payment?.qrCodeData).toBe('00020101021230450012ABA0015KHQR02030405060708');
+      expect(result.payment?.qrCodeImage).toBe('data:image/png;base64,UkVNT1ZFRF9QYXlXZXlfUVE=');
+      expect(result.payment?.abapayDeeplink).toBe('abamobilebank://ababank.com?type=payway&qrcode=pw-123');
+      expect(result.payment?.checkoutQrUrl).toBe('https://checkout-sandbox.payway.com.kh/qr/pw-123');
+      expect(mock.prisma.payment.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ provider: 'ABA_PAYWAY', status: 'PENDING' })
+        })
+      );
+    });
+
+    it('resumePayment preserves PayWay QR/deeplink data from metadata', async () => {
+      mock.prisma.payment.findUnique.mockResolvedValue(null);
+      mock.prisma.order.findUnique.mockResolvedValue(ORDER_ROW);
+      const payWayMetadata = {
+        tranId: 'pw-tran-123456',
+        reqTime: '20260828120000',
+        qrString: '00020101021230450012ABA0015KHQR02030405060708',
+        qrCodeImage: 'data:image/png;base64,UkVNT1ZFRF9QYXlXZXlfUVE=',
+        abapayDeeplink: 'abamobilebank://ababank.com?type=payway&qrcode=pw-123',
+        checkoutQrUrl: 'https://checkout-sandbox.payway.com.kh/qr/pw-123',
+        environment: 'sandbox'
+      };
+      mock.prisma.payment.findFirst.mockResolvedValue({
+        ...PAYMENT_ROW,
+        provider: 'ABA_PAYWAY',
+        amount: new Prisma.Decimal('2.60'),
+        metadata: payWayMetadata,
+        expiresAt: new Date(Date.now() + 5 * 60 * 1000)
+      });
+
+      const result = await service.createPayment('user-1', 'order-1', 'ABA_PAYWAY', 'idem-resume-pw-full');
+
+      expect(result.success).toBe(true);
+      expect(result.resumed).toBe(true);
+      expect(result.payment?.qrCodeData).toBe(payWayMetadata.qrString);
+      expect(result.payment?.qrCodeImage).toBe(payWayMetadata.qrCodeImage);
+      expect(result.payment?.abapayDeeplink).toBe(payWayMetadata.abapayDeeplink);
+      expect(result.payment?.checkoutQrUrl).toBe(payWayMetadata.checkoutQrUrl);
+      expect(mock.prisma.payment.create).not.toHaveBeenCalled();
+    });
+
+    it('payment is stored with ABA_PAYWAY provider in database', async () => {
+      mock.prisma.payment.findUnique.mockResolvedValue(null);
+      mock.prisma.order.findUnique.mockResolvedValue(ORDER_ROW);
+      mock.prisma.payment.findFirst.mockResolvedValue(null);
+      mock.prisma.payment.create.mockResolvedValue(PAYMENT_ROW);
+
+      await service.createPayment('user-1', 'order-1', 'ABA_PAYWAY', 'idem-pw-db');
+
+      const createdData = mock.prisma.payment.create.mock.calls[0]?.[0].data;
+      expect(createdData?.provider).toBe('ABA_PAYWAY');
+      const meta = createdData?.metadata as Record<string, unknown>;
+      expect(meta?.qrString).toBe('00020101021230450012ABA0015KHQR02030405060708');
+      expect(meta?.qrCodeImage).toBe('data:image/png;base64,UkVNT1ZFRF9QYXlXZXlfUVE=');
+      expect(meta?.abapayDeeplink).toBe('abamobilebank://ababank.com?type=payway&qrcode=pw-123');
+      expect(meta?.checkoutQrUrl).toBe('https://checkout-sandbox.payway.com.kh/qr/pw-123');
     });
   });
 

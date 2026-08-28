@@ -25,6 +25,9 @@ interface PayWayPurchaseResponse {
     tran_id?: string;
   };
   qr_string?: string;
+  qrString?: string;
+  qr_image?: string;
+  qrImage?: string;
   abapay_deeplink?: string;
   checkout_qr_url?: string;
 }
@@ -210,7 +213,7 @@ export class PayWayPaymentProvider extends BasePaymentProvider {
       const amount = params.amount;
       const currency = params.currency.toUpperCase();
 
-      const paymentOption = 'abapay_khqr_deeplink';
+      const paymentOption = 'abapay_khqr';
 
       const hash = generateHash(
         this.config.apiKey,
@@ -257,7 +260,7 @@ export class PayWayPaymentProvider extends BasePaymentProvider {
 
       let response: Response;
       try {
-        response = await fetch(this.endpoint('/api/payment-gateway/v1/payments/purchase'), {
+        response = await fetch(this.endpoint('/api/payment-gateway/v1/payments/generate-qr'), {
           method: 'POST',
           body: formData,
           signal: controller.signal
@@ -276,12 +279,12 @@ export class PayWayPaymentProvider extends BasePaymentProvider {
           providerPaymentId: tranId,
           reference,
           expiresAt: params.expiresAt,
-          paymentUrl: this.endpoint('/api/payment-gateway/v1/payments/purchase'),
+          paymentUrl: this.endpoint('/api/payment-gateway/v1/payments/generate-qr'),
           metadata: {
             tranId,
             reqTime,
             checkoutHtml: html,
-            checkoutUrl: `${this.config.apiUrl}/api/payment-gateway/v1/payments/purchase`,
+            checkoutUrl: `${this.config.apiUrl}/api/payment-gateway/v1/payments/generate-qr`,
             environment: this.config.environment
           }
         };
@@ -311,12 +314,14 @@ export class PayWayPaymentProvider extends BasePaymentProvider {
         providerPaymentId: parsed.status?.tran_id || tranId,
         reference,
         expiresAt: params.expiresAt,
-        qrCodeData: parsed.qr_string,
+        qrCodeData: parsed.qr_string || parsed.qrString,
+        qrCodeImage: parsed.qr_image || parsed.qrImage,
         paymentUrl: parsed.checkout_qr_url,
         metadata: {
           tranId: parsed.status?.tran_id || tranId,
           reqTime,
-          qrString: parsed.qr_string,
+          qrString: parsed.qr_string || parsed.qrString,
+          qrCodeImage: parsed.qr_image || parsed.qrImage,
           abapayDeeplink: parsed.abapay_deeplink,
           checkoutQrUrl: parsed.checkout_qr_url,
           environment: this.config.environment
