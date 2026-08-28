@@ -23,13 +23,20 @@ interface PayWayPurchaseResponse {
     code?: string | number;
     message?: string;
     tran_id?: string;
+    trace_id?: string;
   };
+  message?: string;
+  error?: string;
   qr_string?: string;
   qrString?: string;
   qr_image?: string;
   qrImage?: string;
   abapay_deeplink?: string;
   checkout_qr_url?: string;
+  app_store?: string;
+  play_store?: string;
+  amount?: number;
+  currency?: string;
 }
 
 interface PayWayCheckTransactionResponse {
@@ -212,8 +219,18 @@ export class PayWayPaymentProvider extends BasePaymentProvider {
       const tranId = this.generateTranId(reference);
       const amount = params.amount;
       const currency = params.currency.toUpperCase();
-
       const paymentOption = 'abapay_khqr';
+      const purchaseType = 'purchase';
+      const lifetime = 10;
+      const qrImageTemplate = 'template3_color';
+
+      const callbackUrl = process.env.ABA_PAYWAY_CALLBACK_URL?.trim() || '';
+      const encodedCallbackUrl = callbackUrl ? Buffer.from(callbackUrl).toString('base64') : '';
+
+      const firstName = (params.metadata?.firstName as string) || '';
+      const lastName = (params.metadata?.lastName as string) || '';
+      const email = (params.metadata?.email as string) || '';
+      const phone = (params.metadata?.phone as string) || '';
 
       const hash = generateHash(
         this.config.apiKey,
@@ -222,38 +239,40 @@ export class PayWayPaymentProvider extends BasePaymentProvider {
         tranId,                  // 3  tran_id
         amount,                  // 4  amount
         '',                      // 5  items
-        '',                      // 6  shipping
-        '',                      // 7  firstname
-        '',                      // 8  lastname
-        '',                      // 9  email
-        '',                      // 10 phone
-        '',                      // 11 type
-        paymentOption,           // 12 payment_option
-        '',                      // 13 return_url
-        '',                      // 14 cancel_url
-        '',                      // 15 continue_success_url
-        '',                      // 16 return_deeplink
-        currency,                // 17 currency
-        '',                      // 18 custom_fields
-        reference,               // 19 return_params
-        '',                      // 20 payout
-        '',                      // 21 lifetime
-        '',                      // 22 additional_params
-        '',                      // 23 google_pay_token
-        ''                       // 24 skip_success_page
+        firstName,               // 6  first_name
+        lastName,                // 7  last_name
+        email,                   // 8  email
+        phone,                   // 9  phone
+        purchaseType,            // 10 purchase_type
+        paymentOption,           // 11 payment_option
+        encodedCallbackUrl,      // 12 callback_url
+        '',                      // 13 return_deeplink
+        currency,                // 14 currency
+        '',                      // 15 custom_fields
+        reference,               // 16 return_params
+        '',                      // 17 payout
+        String(lifetime),        // 18 lifetime
+        qrImageTemplate          // 19 qr_image_template
       );
 
-      const formData = new FormData();
-      formData.append('req_time', reqTime);
-      formData.append('merchant_id', this.config.merchantId);
-      formData.append('tran_id', tranId);
-      formData.append('amount', amount);
-      formData.append('hash', hash);
-      formData.append('currency', currency);
-      formData.append('payment_option', paymentOption);
-      formData.append('firstname', (params.metadata?.firstName as string) || '');
-      formData.append('lastname', (params.metadata?.lastName as string) || '');
-      formData.append('return_params', reference);
+      const requestBody = {
+        req_time: reqTime,
+        merchant_id: this.config.merchantId,
+        tran_id: tranId,
+        amount,
+        currency,
+        payment_option: paymentOption,
+        purchase_type: purchaseType,
+        lifetime,
+        qr_image_template: qrImageTemplate,
+        hash,
+        first_name: firstName || undefined,
+        last_name: lastName || undefined,
+        email: email || undefined,
+        phone: phone || undefined,
+        callback_url: encodedCallbackUrl || undefined,
+        return_params: reference
+      };
 
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 30_000);
@@ -262,51 +281,64 @@ export class PayWayPaymentProvider extends BasePaymentProvider {
       try {
         response = await fetch(this.endpoint('/api/payment-gateway/v1/payments/generate-qr'), {
           method: 'POST',
-          body: formData,
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(requestBody),
           signal: controller.signal
         });
       } finally {
         clearTimeout(timeout);
       }
 
+      const httpStatus = response.status;
       const contentType = response.headers.get('content-type') || '';
 
       if (contentType.includes('text/html')) {
         const html = await response.text();
+        console.warn(`[PayWayPaymentProvider] generate-qr returned HTML (HTTP ${httpStatus}), likely a merchant configuration issue.`);
         return {
-          success: true,
-          paymentId: reference,
-          providerPaymentId: tranId,
-          reference,
-          expiresAt: params.expiresAt,
-          paymentUrl: this.endpoint('/api/payment-gateway/v1/payments/generate-qr'),
-          metadata: {
-            tranId,
-            reqTime,
-            checkoutHtml: html,
-            checkoutUrl: `${this.config.apiUrl}/api/payment-gateway/v1/payments/generate-qr`,
-            environment: this.config.environment
-          }
+          success: false,
+          error: `PayWay returned an HTML page instead of JSON (HTTP ${httpStatus}). The merchant profile may not have the QR API enabled.`
         };
+      }
+
+      let rawBody: string;
+      try {
+        rawBody = await response.text();
+      } catch {
+        rawBody = '';
       }
 
       let parsed: PayWayPurchaseResponse;
       try {
-        const body = await response.text();
-        parsed = body ? JSON.parse(body) : {};
+        parsed = rawBody ? JSON.parse(rawBody) : {};
       } catch {
-        parsed = {};
-      }
-
-      if (parsed.status?.code !== '00' && parsed.status?.code !== 0) {
-        const code = parsed.status?.code;
-        const message = parsed.status?.message || 'PayWay rejected the transaction';
-        console.warn(`[PayWayPaymentProvider] createPayment failed: code=${code} message=${message}`);
+        console.warn(`[PayWayPaymentProvider] generate-qr returned non-JSON (HTTP ${httpStatus}): ${rawBody.slice(0, 500)}`);
         return {
           success: false,
-          error: `PayWay error ${code}: ${message}`
+          error: `PayWay returned invalid JSON (HTTP ${httpStatus}). Raw: ${rawBody.slice(0, 200)}`
         };
       }
+
+      const statusCode = parsed.status?.code;
+      const statusMessage = parsed.status?.message;
+      const isSuccess = statusCode === '0' || statusCode === 0 || statusCode === '00';
+
+      if (!isSuccess) {
+        const codeStr = statusCode !== undefined && statusCode !== null ? String(statusCode) : 'unknown';
+        const msgStr = statusMessage || parsed.message || parsed.error || `PayWay rejected the request (HTTP ${httpStatus})`;
+        console.warn(`[PayWayPaymentProvider] generate-qr failed: HTTP=${httpStatus} code=${codeStr} message=${msgStr}`);
+        return {
+          success: false,
+          error: `PayWay error ${codeStr}: ${msgStr}`
+        };
+      }
+
+      const qrCodeData = parsed.qr_string || parsed.qrString;
+      const qrCodeImage = parsed.qr_image || parsed.qrImage;
+      const abapayDeeplink = parsed.abapay_deeplink;
+      const checkoutQrUrl = parsed.checkout_qr_url;
 
       return {
         success: true,
@@ -314,24 +346,24 @@ export class PayWayPaymentProvider extends BasePaymentProvider {
         providerPaymentId: parsed.status?.tran_id || tranId,
         reference,
         expiresAt: params.expiresAt,
-        qrCodeData: parsed.qr_string || parsed.qrString,
-        qrCodeImage: parsed.qr_image || parsed.qrImage,
-        paymentUrl: parsed.checkout_qr_url,
+        qrCodeData,
+        qrCodeImage,
+        paymentUrl: checkoutQrUrl,
         metadata: {
           tranId: parsed.status?.tran_id || tranId,
           reqTime,
-          qrString: parsed.qr_string || parsed.qrString,
-          qrCodeImage: parsed.qr_image || parsed.qrImage,
-          abapayDeeplink: parsed.abapay_deeplink,
-          checkoutQrUrl: parsed.checkout_qr_url,
+          qrString: qrCodeData,
+          qrCodeImage,
+          abapayDeeplink,
+          checkoutQrUrl,
           environment: this.config.environment
         }
       };
     } catch (error) {
-      logProviderError('createPayment', error, this.config?.apiKey);
+      logProviderError('generate-qr', error, this.config?.apiKey);
       return {
         success: false,
-        error: mapProviderError(error, 'Failed to create ABA PayWay payment', this.config?.apiKey)
+        error: mapProviderError(error, 'Failed to generate ABA PayWay QR', this.config?.apiKey)
       };
     }
   }
