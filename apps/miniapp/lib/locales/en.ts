@@ -229,6 +229,7 @@ const en = {
     openAbaMobile: 'Open ABA Mobile',
     openCheckoutPage: 'Open Checkout Page',
     scanToPayAnyApp: 'Scan to pay with any supported banking app',
+    deeplinkFallback: 'If ABA Mobile does not open, scan the QR code with ABA Mobile, Bakong, or any supported banking app.',
   },
   // Orders
   orders: {

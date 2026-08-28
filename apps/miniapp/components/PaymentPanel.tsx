@@ -268,57 +268,42 @@ export function PaymentPanel({
 
       {payment.qrCodeData && (
         <>
-          <div className="rounded-xl border border-line/50 bg-muted/30 p-3">
-            <p className="mb-2 text-xs font-medium uppercase tracking-wider text-soft">{t('payment.chooseWayToPay')}</p>
-            <div className="flex items-center gap-3 rounded-xl border border-primary/30 bg-primary/5 p-3">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-lg font-bold text-primary">
-                &#x1F4B3;
-              </div>
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-semibold text-ink">{t('payment.abaKhqrTitle')}</p>
-                <p className="text-xs text-soft">{t('payment.abaKhqrDescription')}</p>
-              </div>
-              <span className="text-primary">&#x2713;</span>
-            </div>
-          </div>
-
           <div className="flex flex-col items-center gap-2">
             <QrDisplay
-              value={payment.qrCodeImage ?? payment.qrCodeData}
+              value={payment.qrCodeData}
               alt={`ABA PayWay KHQR for order ${orderNumber !== undefined ? `#${orderNumber}` : ''}`}
             />
-            <p className="text-xs text-soft">{t('payment.scanToPayAnyApp')}</p>
+            <p className="text-center text-xs text-soft">{t('payment.scanToPayAnyApp')}</p>
           </div>
         </>
       )}
 
       {payment.abapayDeeplink && (
-        <a
-          href={payment.abapayDeeplink}
-          onClick={(e) => {
-            e.preventDefault();
+        <button
+          type="button"
+          onClick={() => {
+            const deeplink = payment.abapayDeeplink!;
             const tg = window.Telegram?.WebApp;
             if (tg?.openLink) {
-              tg.openLink(payment.abapayDeeplink!);
+              tg.openLink(deeplink, { try_instant_view: false });
             } else {
-              window.open(payment.abapayDeeplink!, '_blank');
+              const iframe = document.createElement('iframe');
+              iframe.style.display = 'none';
+              iframe.src = deeplink;
+              document.body.appendChild(iframe);
+              setTimeout(() => document.body.removeChild(iframe), 3000);
             }
           }}
-          className="block rounded-xl bg-gradient-to-r from-primary to-violet px-4 py-3 text-center font-semibold text-white shadow-md shadow-primary/20 transition-default hover:shadow-lg active:scale-95"
+          className="block w-full rounded-xl bg-gradient-to-r from-primary to-violet px-4 py-3 text-center font-semibold text-white shadow-md shadow-primary/20 transition-default hover:shadow-lg active:scale-95"
         >
           {t('payment.openAbaMobile')}
-        </a>
+        </button>
       )}
 
-      {(payment.checkoutQrUrl || payment.paymentUrl) && (
-        <a
-          href={payment.checkoutQrUrl ?? payment.paymentUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="block rounded-xl border border-line bg-card px-4 py-3 text-center font-medium text-ink transition-default hover:border-primary/40"
-        >
-          {t('payment.openCheckoutPage')}
-        </a>
+      {payment.abapayDeeplink && (
+        <p className="text-center text-xs text-soft">
+          {t('payment.deeplinkFallback')}
+        </p>
       )}
 
       {!isTerminal && (

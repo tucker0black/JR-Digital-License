@@ -517,60 +517,45 @@ function WalletContent() {
             </div>
             {depositPayment.qrCodeData && (
               <>
-                <div className="mt-5 rounded-xl border border-line/50 bg-muted/30 p-3">
-                  <p className="mb-2 text-xs font-medium uppercase tracking-wider text-soft">{t('payment.chooseWayToPay')}</p>
-                  <div className="flex items-center gap-3 rounded-xl border border-primary/30 bg-primary/5 p-3">
-                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-lg font-bold text-primary">
-                      &#x1F4B3;
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-semibold text-ink">{t('payment.abaKhqrTitle')}</p>
-                      <p className="text-xs text-soft">{t('payment.abaKhqrDescription')}</p>
-                    </div>
-                    <span className="text-primary">&#x2713;</span>
-                  </div>
-                </div>
-
                 <div className="mt-5 flex flex-col items-center gap-2">
                   <QrDisplay
-                    value={depositPayment.qrCodeImage ?? depositPayment.qrCodeData}
+                    value={depositPayment.qrCodeData}
                     alt="ABA PayWay KHQR deposit"
                   />
-                  <p className="text-xs text-soft">{t('payment.scanToPayAnyApp')}</p>
+                  <p className="text-center text-xs text-soft">{t('payment.scanToPayAnyApp')}</p>
                 </div>
               </>
             )}
             {depositPayment.abapayDeeplink && (
-              <a
-                href={depositPayment.abapayDeeplink}
-                onClick={(e) => {
-                  e.preventDefault();
+              <button
+                type="button"
+                onClick={() => {
+                  const deeplink = depositPayment.abapayDeeplink!;
                   const tg = window.Telegram?.WebApp;
                   if (tg?.openLink) {
-                    tg.openLink(depositPayment.abapayDeeplink!);
+                    tg.openLink(deeplink, { try_instant_view: false });
                   } else {
-                    window.open(depositPayment.abapayDeeplink!, '_blank');
+                    const iframe = document.createElement('iframe');
+                    iframe.style.display = 'none';
+                    iframe.src = deeplink;
+                    document.body.appendChild(iframe);
+                    setTimeout(() => document.body.removeChild(iframe), 3000);
                   }
                 }}
-                className="mt-4 block rounded-xl bg-gradient-to-r from-primary to-violet px-4 py-3 text-center font-semibold text-white shadow-md shadow-primary/20 transition-default hover:shadow-lg active:scale-95"
+                className="mt-4 block w-full rounded-xl bg-gradient-to-r from-primary to-violet px-4 py-3 text-center font-semibold text-white shadow-md shadow-primary/20 transition-default hover:shadow-lg active:scale-95"
               >
                 {t('payment.openAbaMobile')}
-              </a>
+              </button>
+            )}
+            {depositPayment.abapayDeeplink && (
+              <p className="text-center text-xs text-soft">
+                {t('payment.deeplinkFallback')}
+              </p>
             )}
             {depositVerificationError && (
               <p className="mt-4 rounded-xl border border-warning/30 bg-warning/10 px-3 py-2 text-center text-xs text-warning">
                 {depositVerificationError}
               </p>
-            )}
-            {(depositPayment.checkoutQrUrl || depositPayment.paymentUrl) && (
-              <a
-                href={depositPayment.checkoutQrUrl ?? depositPayment.paymentUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="mt-4 block rounded-xl border border-line bg-card px-4 py-3 text-center font-medium text-ink transition-default hover:border-primary/40"
-              >
-                {t('payment.openCheckoutPage')}
-              </a>
             )}
             <div className="mt-4 flex gap-2">
               <button

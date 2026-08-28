@@ -7,13 +7,14 @@ interface QrDisplayProps {
   value?: string;
   alt?: string;
   className?: string;
+  size?: number;
 }
 
 function isImageSource(value: string): boolean {
   return value.startsWith('data:image') || value.startsWith('http://') || value.startsWith('https://');
 }
 
-export function QrDisplay({ value, alt, className }: QrDisplayProps) {
+export function QrDisplay({ value, alt, className, size = 640 }: QrDisplayProps) {
   const [imageUrl, setImageUrl] = useState<string | null>(null);
 
   useEffect(() => {
@@ -29,7 +30,12 @@ export function QrDisplay({ value, alt, className }: QrDisplayProps) {
       return;
     }
 
-    QRCode.toDataURL(value, { errorCorrectionLevel: 'M', margin: 1, width: 512 })
+    QRCode.toDataURL(value, {
+      errorCorrectionLevel: 'M',
+      margin: 2,
+      width: size,
+      color: { dark: '#000000', light: '#FFFFFF' }
+    })
       .then((url) => {
         if (!cancelled) setImageUrl(url);
       })
@@ -40,16 +46,18 @@ export function QrDisplay({ value, alt, className }: QrDisplayProps) {
     return () => {
       cancelled = true;
     };
-  }, [value]);
+  }, [value, size]);
 
   if (!value) return null;
 
   if (imageUrl) {
+    const imgClass = className || 'h-auto w-full max-w-[320px] rounded-2xl border border-line bg-white p-3 shadow-sm';
     return (
       <img
         src={imageUrl}
         alt={alt || 'QR code'}
-        className={className || 'h-56 w-56 rounded-xl border border-line bg-white p-2 shadow-sm'}
+        className={imgClass}
+        style={{ imageRendering: 'pixelated' }}
       />
     );
   }

@@ -231,6 +231,7 @@ const km: TranslationKeys = {
     openAbaMobile: 'បើក ABA Mobile',
     openCheckoutPage: 'បើកទំព័របង់ប្រាក់',
     scanToPayAnyApp: 'ស្កេនដើម្បីបង់ប្រាក់ជាមួយកម្មវិធីធនាគារដែលគាំទ្រ',
+    deeplinkFallback: 'ប្រសិនបើ ABA Mobile មិនបើក សូមស្កេនកូដ QR ជាមួយ ABA Mobile, Bakong, ឬកម្មវិធីធនាគារដែលគាំទ្រ។',
   },
   // Orders
   orders: {
