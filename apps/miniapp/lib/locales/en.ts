@@ -223,6 +223,12 @@ const en = {
     amount: 'Amount',
     scanInstruction: 'Scan with a supported banking app to pay',
     payWithAbaMobile: 'Pay with ABA Mobile',
+    chooseWayToPay: 'Choose way to pay',
+    abaKhqrTitle: 'ABA KHQR',
+    abaKhqrDescription: 'Scan to pay with any banking app',
+    openAbaMobile: 'Open ABA Mobile',
+    openCheckoutPage: 'Open Checkout Page',
+    scanToPayAnyApp: 'Scan to pay with any supported banking app',
   },
   // Orders
   orders: {

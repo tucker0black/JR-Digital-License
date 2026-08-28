@@ -225,6 +225,12 @@ const km: TranslationKeys = {
     amount: 'ចំនួនទឹកប្រាក់',
     scanInstruction: 'ស្កេនកូដ QR ជាមួយកម្មវិធីធនាគារដែលគាំទ្រដើម្បីទូទាត់',
     payWithAbaMobile: 'បង់ដោយ ABA Mobile',
+    chooseWayToPay: 'ជ្រើសរើសវិធីបង់ប្រាក់',
+    abaKhqrTitle: 'ABA KHQR',
+    abaKhqrDescription: 'ស្កេនដើម្បីបង់ប្រាក់ជាមួយកម្មវិធីធនាគារណាមួយ',
+    openAbaMobile: 'បើក ABA Mobile',
+    openCheckoutPage: 'បើកទំព័របង់ប្រាក់',
+    scanToPayAnyApp: 'ស្កេនដើម្បីបង់ប្រាក់ជាមួយកម្មវិធីធនាគារដែលគាំទ្រ',
   },
   // Orders
   orders: {

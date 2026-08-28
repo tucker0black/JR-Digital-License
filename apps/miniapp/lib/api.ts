@@ -348,6 +348,7 @@ export interface CreatePaymentResponse {
     amount?: string;
     currency?: string;
     abapayDeeplink?: string;
+    checkoutQrUrl?: string;
   };
   resumed?: boolean;
 }

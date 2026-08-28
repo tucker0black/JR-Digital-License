@@ -58,6 +58,7 @@ export interface CreatePaymentResult {
     amount?: string;
     currency?: string;
     abapayDeeplink?: string;
+    checkoutQrUrl?: string;
   };
   error?: string;
 }
@@ -255,6 +256,9 @@ export class PaymentService {
         currency: payment.currency,
         abapayDeeplink: typeof providerResult.metadata?.abapayDeeplink === 'string'
           ? providerResult.metadata.abapayDeeplink
+          : undefined,
+        checkoutQrUrl: typeof providerResult.metadata?.checkoutQrUrl === 'string'
+          ? providerResult.metadata.checkoutQrUrl
           : undefined
       }
     };
@@ -383,6 +387,9 @@ export class PaymentService {
         currency: payment.currency,
         abapayDeeplink: typeof providerResult.metadata?.abapayDeeplink === 'string'
           ? providerResult.metadata.abapayDeeplink
+          : undefined,
+        checkoutQrUrl: typeof providerResult.metadata?.checkoutQrUrl === 'string'
+          ? providerResult.metadata.checkoutQrUrl
           : undefined
       }
     };
@@ -432,6 +439,10 @@ export class PaymentService {
       (typeof metadata.abapayDeeplink === 'string' && metadata.abapayDeeplink) ||
       undefined;
 
+    const checkoutQrUrl =
+      (typeof metadata.checkoutQrUrl === 'string' && metadata.checkoutQrUrl) ||
+      undefined;
+
     return {
       success: true,
       resumed: true,
@@ -445,7 +456,8 @@ export class PaymentService {
         merchantName,
         amount: payment.amount.toFixed(2),
         currency: payment.currency,
-        abapayDeeplink
+        abapayDeeplink,
+        checkoutQrUrl
       }
     };
   }

@@ -24,6 +24,8 @@ interface TelegramWebApp {
   };
   colorScheme?: 'light' | 'dark';
   ready?: () => void;
+  openLink?: (url: string, options?: { try_instant_view?: boolean }) => void;
+  openTelegramLink?: (url: string) => void;
   BackButton?: TelegramBackButton;
 }
 
