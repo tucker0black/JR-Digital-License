@@ -1656,7 +1656,7 @@ export function buildApp() {
     // Customer-created payment sessions must use a real server-verified rail.
     // Wallet payments have their own endpoint; MANUAL is retained only for
     // historical records and is not an accepted customer payment method.
-    const validProviders = ['KHQR', 'BAKONG'];
+    const validProviders = ['KHQR', 'BAKONG', 'ABA_PAYWAY'];
     if (!validProviders.includes(body.provider)) {
       return reply.status(400).send({ error: 'Invalid payment provider' });
     }
@@ -1892,6 +1892,76 @@ export function buildApp() {
     }
 
     return { order: result.order, payment: result.payment };
+  });
+
+  // ==================== ABA PAYWAY WEBHOOK ====================
+  app.post('/api/payments/webhook/payway', {
+    config: { rateLimit: { max: 60, timeWindow: '1 minute' } }
+  }, async (request, reply) => {
+    const body = (request.body ?? {}) as Record<string, unknown>;
+
+    request.log.info({ event: 'payway_webhook_received', transactionId: body.transaction_id }, 'PayWay webhook received');
+
+    const { PayWayPaymentProvider } = await import('./services/payment/payway-provider.js');
+    const merchantId = process.env.ABA_PAYWAY_MERCHANT_ID ?? '';
+
+    const payload = PayWayPaymentProvider.verifyWebhookPayload(body as Parameters<typeof PayWayPaymentProvider.verifyWebhookPayload>[0], merchantId);
+    if (!payload) {
+      request.log.warn({ event: 'payway_webhook_invalid' }, 'PayWay webhook validation failed');
+      return reply.status(200).send({ status: 'ignored' });
+    }
+
+    const paymentStatus = payload.payment_status_code;
+    if (paymentStatus !== 0) {
+      request.log.info({ transactionId: payload.transaction_id, status: paymentStatus }, 'PayWay webhook non-success status');
+      return reply.status(200).send({ status: 'acknowledged' });
+    }
+
+    const tranId = payload.transaction_id;
+    if (!tranId) {
+      return reply.status(200).send({ status: 'ignored' });
+    }
+
+    const payment = await prisma.payment.findFirst({
+      where: {
+        provider: 'ABA_PAYWAY',
+        OR: [
+          { providerPaymentId: tranId },
+          { reference: payload.merchant_ref ?? tranId }
+        ]
+      },
+      include: { order: true }
+    });
+
+    if (!payment) {
+      request.log.warn({ transactionId: tranId }, 'PayWay webhook: no matching payment');
+      return reply.status(200).send({ status: 'ignored' });
+    }
+
+    if (payment.status === 'SUCCEEDED') {
+      return reply.status(200).send({ status: 'already_processed' });
+    }
+
+    if (payment.status === 'EXPIRED' || payment.status === 'CANCELLED' || payment.status === 'FAILED') {
+      return reply.status(200).send({ status: 'terminal' });
+    }
+
+    try {
+      const result = await paymentService.verifyPayment(payment.id);
+      if (result.status === 'SUCCEEDED' && payment.orderId) {
+        const order = await prisma.order.findUnique({
+          where: { id: payment.orderId },
+          select: { status: true }
+        });
+        if (order && order.status !== 'COMPLETED') {
+          void fulfillOrderAndNotify(payment.orderId);
+        }
+      }
+    } catch (error) {
+      request.log.error({ paymentId: payment.id, error }, 'PayWay webhook verification failed');
+    }
+
+    return reply.status(200).send({ status: 'processed' });
   });
 
   // ==================== SUPPORT TICKETS ====================
@@ -3742,9 +3812,9 @@ export function buildApp() {
       return reply.status(404).send({ error: 'Payment not found' });
     }
 
-    if (payment.provider !== 'KHQR' && payment.provider !== 'BAKONG') {
+    if (payment.provider !== 'KHQR' && payment.provider !== 'BAKONG' && payment.provider !== 'ABA_PAYWAY') {
       return reply.status(400).send({
-        error: `Only KHQR/Bakong payments can be rechecked against Bakong (this payment is ${payment.provider})`
+        error: `Only KHQR/Bakong/ABA PayWay payments can be rechecked (this payment is ${payment.provider})`
       });
     }
 

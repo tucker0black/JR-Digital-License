@@ -81,6 +81,7 @@ enum PaymentProvider {
   BAKONG
   WALLET
   MANUAL
+  ABA_PAYWAY
 }
 
 enum WalletTransactionType {

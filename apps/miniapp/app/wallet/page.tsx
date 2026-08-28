@@ -70,6 +70,7 @@ function WalletContent() {
     amount?: string;
     currency?: string;
     merchantName?: string;
+    abapayDeeplink?: string;
     resumed?: boolean;
   } | null>(null);
   const [depositStatus, setDepositStatus] = useState('PENDING');
@@ -517,10 +518,18 @@ function WalletContent() {
               <div className="mt-5 flex flex-col items-center gap-2">
                 <QrDisplay
                   value={depositPayment.qrCodeImage ?? depositPayment.qrCodeData}
-                  alt="KHQR deposit"
+                  alt="ABA PayWay deposit"
                 />
                 <p className="text-xs text-soft">{t('wallet.scanWithBakong')}</p>
               </div>
+            )}
+            {depositPayment.abapayDeeplink && (
+              <a
+                href={depositPayment.abapayDeeplink}
+                className="mt-4 block rounded-xl bg-gradient-to-r from-primary to-violet px-4 py-3 text-center font-semibold text-white shadow-md shadow-primary/20 transition-default hover:shadow-lg active:scale-95"
+              >
+                {t('payment.payWithAbaMobile')}
+              </a>
             )}
             {depositVerificationError && (
               <p className="mt-4 rounded-xl border border-warning/30 bg-warning/10 px-3 py-2 text-center text-xs text-warning">
@@ -532,7 +541,7 @@ function WalletContent() {
                 href={depositPayment.paymentUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="mt-4 block rounded-xl bg-gradient-to-r from-primary to-violet px-4 py-3 text-center font-semibold text-white shadow-md shadow-primary/20 transition-default hover:shadow-lg active:scale-95"
+                className="mt-4 block rounded-xl border border-line bg-card px-4 py-3 text-center font-medium text-ink transition-default hover:border-primary/40"
               >
                 {t('wallet.openPaymentPage')}
               </a>

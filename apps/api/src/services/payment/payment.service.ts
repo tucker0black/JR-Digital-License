@@ -380,7 +380,10 @@ export class PaymentService {
         qrCodeImage: providerResult.qrCodeImage,
         merchantName: providerResult.merchantName,
         amount: payment.amount.toFixed(2),
-        currency: payment.currency
+        currency: payment.currency,
+        abapayDeeplink: typeof providerResult.metadata?.abapayDeeplink === 'string'
+          ? providerResult.metadata.abapayDeeplink
+          : undefined
       }
     };
   }

@@ -138,7 +138,7 @@ export class CustomerWalletService {
           balanceBefore,
           balanceAfter,
           reference: payment.reference,
-          reason: 'Deposit via KHQR/Bakong payment'
+          reason: 'Deposit via ABA PayWay'
         }
       });
 

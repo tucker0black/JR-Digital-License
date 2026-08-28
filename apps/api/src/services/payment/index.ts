@@ -3,6 +3,8 @@ export { PaymentExpirationService } from './payment-expiration.service.js';
 export { BasePaymentProvider, type PaymentProvider } from './provider.js';
 export { ManualPaymentProvider } from './manual-provider.js';
 export { BakongPaymentProvider } from './bakong-provider.js';
+export { PayWayPaymentProvider } from './payway-provider.js';
+export type { PayWayWebhookPayload } from './payway-provider.js';
 export type { 
   CreatePaymentParams, 
   CreatePaymentResult, 
