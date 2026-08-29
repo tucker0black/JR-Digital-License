@@ -1654,20 +1654,27 @@ export function buildApp() {
       return reply.status(400).send({ error: 'Invalid idempotency key' });
     }
 
-    // Customer-created payment sessions must use a real server-verified rail.
-    // Wallet payments have their own endpoint; MANUAL is retained only for
-    // historical records and is not an accepted customer payment method.
+    // Customer-created payment sessions must use KHQRCC.
+    // Legacy providers (KHQR, BAKONG, ABA_PAYWAY) are normalized to KHQRCC
+    // so that stale Mini App bundles or cached clients still route correctly.
     const validProviders = ['KHQR', 'BAKONG', 'ABA_PAYWAY', 'KHQRCC'];
     if (!validProviders.includes(body.provider)) {
       return reply.status(400).send({ error: 'Invalid payment provider' });
     }
+
+    const requestedProvider = body.provider;
+    const selectedProvider: PrismaPaymentProvider = 'KHQRCC';
+    if (requestedProvider !== 'KHQRCC') {
+      console.warn(`[POST /api/payments] Normalizing provider "${requestedProvider}" → "${selectedProvider}" for user=${dbUser.id} orderId=${body.orderId}`);
+    }
+    console.info(`[POST /api/payments] user=${dbUser.id} orderId=${body.orderId} requestedProvider=${requestedProvider} selectedProvider=${selectedProvider}`);
 
     let result;
     try {
       result = await paymentService.createPayment(
         dbUser.id,
         body.orderId,
-        body.provider as PrismaPaymentProvider,
+        selectedProvider,
         body.idempotencyKey
       );
     } catch (error) {
@@ -1676,7 +1683,7 @@ export function buildApp() {
           eventType: 'PAYMENT_REPLAY',
           ip: request.ip,
           userId: dbUser.id,
-          metadata: { orderId: body.orderId, provider: body.provider }
+          metadata: { orderId: body.orderId, requestedProvider, selectedProvider }
         });
       }
       return reply.status(400).send({
@@ -1685,7 +1692,7 @@ export function buildApp() {
     }
 
     if (!result.success) {
-      request.log.warn({ orderId: body.orderId, provider: body.provider, error: result.error }, 'Payment creation failed');
+      request.log.warn({ orderId: body.orderId, requestedProvider, selectedProvider, error: result.error }, 'Payment creation failed');
       return reply.status(400).send({ error: result.error });
     }
 

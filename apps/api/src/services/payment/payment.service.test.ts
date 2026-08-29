@@ -1232,4 +1232,97 @@ describe('PaymentService', () => {
       expect(stranger.error).toContain('not found');
     });
   });
+
+  describe('provider normalization regression', () => {
+    it('TEST 1: createPayment with KHQRCC uses KHQRCC provider', async () => {
+      mock.prisma.payment.findUnique.mockResolvedValue(null);
+      mock.prisma.order.findUnique.mockResolvedValue(ORDER_ROW);
+      mock.prisma.payment.findFirst.mockResolvedValue(null);
+      mock.prisma.payment.create.mockResolvedValue({
+        ...PAYMENT_ROW,
+        provider: 'KHQRCC',
+        amount: new Prisma.Decimal('2.60')
+      });
+
+      const result = await service.createPayment('user-1', 'order-1', 'KHQRCC', 'idem-khqrcc-direct');
+
+      expect(result.success).toBe(true);
+      expect(mock.prisma.payment.create).toHaveBeenCalled();
+      const createCall = mock.prisma.payment.create.mock.calls[0];
+      expect(createCall[0].data.provider).toBe('KHQRCC');
+    });
+
+    it('TEST 2: createDepositPayment always uses KHQRCC provider', async () => {
+      mock.prisma.payment.findUnique.mockResolvedValue(null);
+      mock.prisma.payment.findFirst.mockResolvedValue(null);
+      mock.prisma.payment.create.mockResolvedValue({
+        ...PAYMENT_ROW,
+        orderId: null,
+        provider: 'KHQRCC',
+        amount: new Prisma.Decimal('5.00'),
+        reference: 'JR-DP-DEP-TEST'
+      });
+
+      const result = await service.createDepositPayment('user-1', 5.00, 'USD', 'idem-dep-khqrcc');
+
+      expect(result.success).toBe(true);
+      expect(mock.prisma.payment.create).toHaveBeenCalled();
+      const createCall = mock.prisma.payment.create.mock.calls[0];
+      expect(createCall[0].data.provider).toBe('KHQRCC');
+    });
+
+    it('TEST 3: createPayment with ABA_PAYWAY at service layer still works (route normalizes to KHQRCC before calling service)', async () => {
+      mock.prisma.payment.findUnique.mockResolvedValue(null);
+      mock.prisma.order.findUnique.mockResolvedValue(ORDER_ROW);
+      mock.prisma.payment.findFirst.mockResolvedValue(null);
+      mock.prisma.payment.create.mockResolvedValue({
+        ...PAYMENT_ROW,
+        provider: 'ABA_PAYWAY',
+        amount: new Prisma.Decimal('2.60')
+      });
+
+      const result = await service.createPayment('user-1', 'order-1', 'ABA_PAYWAY', 'idem-legacy-pw');
+
+      expect(result.success).toBe(true);
+    });
+
+    it('TEST 4: createPayment with KHQR provider still works (route normalizes to KHQRCC before calling service)', async () => {
+      mock.prisma.payment.findUnique.mockResolvedValue(null);
+      mock.prisma.order.findUnique.mockResolvedValue(ORDER_ROW);
+      mock.prisma.payment.findFirst.mockResolvedValue(null);
+      mock.prisma.payment.create.mockResolvedValue({
+        ...PAYMENT_ROW,
+        provider: 'KHQR',
+        amount: new Prisma.Decimal('2.60')
+      });
+
+      const result = await service.createPayment('user-1', 'order-1', 'KHQR', 'idem-legacy-khqr');
+
+      expect(result.success).toBe(true);
+    });
+
+    it('TEST 5: default factory registers KHQRCC provider', () => {
+      const p = factory.getProvider('KHQRCC');
+      expect(p.providerType).toBe('KHQRCC');
+      expect(p.isAvailable()).toBe(true);
+    });
+
+    it('TEST 6: createPayment order with KHQRCC routes to KHQRCCPaymentProvider not PayWayPaymentProvider', async () => {
+      mock.prisma.payment.findUnique.mockResolvedValue(null);
+      mock.prisma.order.findUnique.mockResolvedValue(ORDER_ROW);
+      mock.prisma.payment.findFirst.mockResolvedValue(null);
+      mock.prisma.payment.create.mockResolvedValue({
+        ...PAYMENT_ROW,
+        provider: 'KHQRCC',
+        amount: new Prisma.Decimal('2.60')
+      });
+
+      const result = await service.createPayment('user-1', 'order-1', 'KHQRCC', 'idem-routing-check');
+
+      expect(result.success).toBe(true);
+      const createCall = mock.prisma.payment.create.mock.calls[0];
+      expect(createCall[0].data.provider).toBe('KHQRCC');
+      expect(result.payment?.paymentUrl).toBeDefined();
+    });
+  });
 });
