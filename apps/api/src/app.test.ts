@@ -2425,7 +2425,7 @@ describe('Customer Isolation', () => {
       );
     });
 
-    it('refuses to cancel when the backend cannot confirm the payment is unpaid', async () => {
+    it('allows cancellation when the provider is unavailable (KHQR.cc managed checkout has no remote cancel)', async () => {
       prisma.payment.findUnique.mockResolvedValue(PAYMENT_ROW);
 
       const response = await app.inject({
@@ -2434,8 +2434,10 @@ describe('Customer Isolation', () => {
         headers: authHeaders
       });
 
-      expect(response.statusCode).toBe(400);
-      expect(response.json().error).toContain('could not be confirmed');
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toEqual(
+        expect.objectContaining({ success: true, status: 'EXPIRED', cancelled: true })
+      );
     });
   });
 

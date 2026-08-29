@@ -147,6 +147,25 @@ class FakePayWayProvider extends BasePaymentProvider {
 class FakeKHQRCCProvider extends BasePaymentProvider {
   readonly name = 'Fake KHQRCC Provider';
   readonly providerType = 'KHQRCC' as const;
+  private succeedOnVerify = false;
+  private failOnVerify = false;
+  private pendingError = 'KHQR.cc payment waiting — verification returned an error';
+
+  setSucceedOnVerify(value: boolean): void {
+    this.succeedOnVerify = value;
+    this.failOnVerify = false;
+  }
+
+  setFailOnVerify(value: boolean): void {
+    this.failOnVerify = value;
+    this.succeedOnVerify = false;
+  }
+
+  setPendingError(message: string): void {
+    this.pendingError = message;
+    this.succeedOnVerify = false;
+    this.failOnVerify = false;
+  }
 
   async createPayment(params: CreatePaymentParams): Promise<CreatePaymentResult> {
     return {
@@ -164,7 +183,13 @@ class FakeKHQRCCProvider extends BasePaymentProvider {
   }
 
   async verifyPayment(_params: VerifyPaymentParams): Promise<VerifyPaymentResult> {
-    return { success: false, status: 'PENDING', error: 'webhook-driven' };
+    if (this.failOnVerify) {
+      return { success: false, status: 'FAILED', error: 'Payment failed' };
+    }
+    if (this.succeedOnVerify) {
+      return { success: true, status: 'SUCCEEDED', providerPaymentId: 'khqrcc-txn-789', paidAt: new Date() };
+    }
+    return { success: false, status: 'PENDING', error: this.pendingError };
   }
 
   async getPaymentStatus(_params: GetPaymentStatusParams): Promise<GetPaymentStatusResult> {
@@ -796,6 +821,66 @@ describe('PaymentService', () => {
       expect(result.success).toBe(false);
       expect(result.status).toBe('PENDING');
       expect(result.error).toContain('could not be confirmed');
+      const expiredUpdates = mock.prisma.payment.updateMany.mock.calls.filter(
+        (call) => call[0]?.data?.status === 'EXPIRED'
+      );
+      expect(expiredUpdates).toHaveLength(0);
+    });
+
+    it('cancels a pending KHQRcc order when provider reports connectivity error (DEFINITELY_UNPAID)', async () => {
+      khqrccProvider.setPendingError('KHQR.cc payment waiting — unable to reach KHQR.cc gateway: connect ECONNREFUSED');
+      mock.prisma.payment.findUnique.mockResolvedValue({ ...PAYMENT_ROW, provider: 'KHQRCC' });
+      mock.prisma.productStock.findMany.mockResolvedValue([]);
+
+      const result = await service.cancelPayment('payment-1', 'user-1');
+
+      expect(result.success).toBe(true);
+      expect(result.status).toBe('EXPIRED');
+      expect(result.cancelled).toBe(true);
+      const expiredUpdates = mock.prisma.payment.updateMany.mock.calls.filter(
+        (call) => call[0]?.data?.status === 'EXPIRED'
+      );
+      expect(expiredUpdates).toHaveLength(1);
+    });
+
+    it('cancels a pending KHQRcc order when provider is not configured (DEFINITELY_UNPAID)', async () => {
+      khqrccProvider.setPendingError('KHQR.cc payment waiting — KHQR.cc payment provider is not configured');
+      mock.prisma.payment.findUnique.mockResolvedValue({ ...PAYMENT_ROW, provider: 'KHQRCC' });
+      mock.prisma.productStock.findMany.mockResolvedValue([]);
+
+      const result = await service.cancelPayment('payment-1', 'user-1');
+
+      expect(result.success).toBe(true);
+      expect(result.status).toBe('EXPIRED');
+      expect(result.cancelled).toBe(true);
+    });
+
+    it('cancels a pending KHQRcc order when verification returns invalid JSON (DEFINITELY_UNPAID)', async () => {
+      khqrccProvider.setPendingError('KHQR.cc payment waiting — verification returned invalid JSON');
+      mock.prisma.payment.findUnique.mockResolvedValue({ ...PAYMENT_ROW, provider: 'KHQRCC' });
+      mock.prisma.productStock.findMany.mockResolvedValue([]);
+
+      const result = await service.cancelPayment('payment-1', 'user-1');
+
+      expect(result.success).toBe(true);
+      expect(result.status).toBe('EXPIRED');
+      expect(result.cancelled).toBe(true);
+    });
+
+    it('does not cancel a KHQRcc order when payment has already succeeded', async () => {
+      khqrccProvider.setSucceedOnVerify(true);
+      mock.prisma.payment.findUnique.mockResolvedValue({ ...PAYMENT_ROW, provider: 'KHQRCC' });
+      mock.prisma.order.findUnique.mockResolvedValue(ORDER_ROW);
+      mock.prisma.productStock.findMany.mockResolvedValue([
+        { id: 'stock-1', orderId: 'order-1', status: 'RESERVED' }
+      ]);
+
+      const result = await service.cancelPayment('payment-1', 'user-1');
+
+      expect(result.success).toBe(true);
+      expect(result.status).toBe('SUCCEEDED');
+      expect(result.paid).toBe(true);
+      expect(result.cancelled).toBeUndefined();
       const expiredUpdates = mock.prisma.payment.updateMany.mock.calls.filter(
         (call) => call[0]?.data?.status === 'EXPIRED'
       );

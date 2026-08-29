@@ -185,7 +185,7 @@ export class KHQRCCPaymentProvider extends BasePaymentProvider {
       return {
         success: false,
         status: 'PENDING',
-        error: this.unavailableError()
+        error: `KHQR.cc payment waiting — ${this.unavailableError()}`
       };
     }
 
@@ -232,7 +232,7 @@ export class KHQRCCPaymentProvider extends BasePaymentProvider {
           success: false,
           status: 'PENDING',
           providerPaymentId: transactionId,
-          error: 'KHQR.cc verification returned invalid JSON'
+          error: 'KHQR.cc payment waiting — verification returned invalid JSON'
         };
       }
 
@@ -278,7 +278,7 @@ export class KHQRCCPaymentProvider extends BasePaymentProvider {
         success: false,
         status: 'PENDING',
         providerPaymentId: transactionId,
-        error: mapProviderError(error, 'Failed to verify KHQR.cc payment', this.config?.secret)
+        error: `KHQR.cc payment waiting — ${mapProviderError(error, 'provider connectivity or configuration error', this.config?.secret)}`
       };
     }
   }
