@@ -2,8 +2,6 @@ import crypto from 'node:crypto';
 import type { PrismaClient, PaymentProvider as PrismaPaymentProvider } from '@prisma/client';
 import { Prisma } from '@prisma/client';
 import { ManualPaymentProvider } from './manual-provider.js';
-import { BakongPaymentProvider } from './bakong-provider.js';
-import { PayWayPaymentProvider } from './payway-provider.js';
 import { KHQRCCPaymentProvider } from './khqrcc-provider.js';
 import type { BasePaymentProvider, VerifyPaymentParams} from './provider.js';
 import type { CustomerWalletService } from '../wallet.service.js';
@@ -18,9 +16,6 @@ export class DefaultPaymentProviderFactory implements PaymentProviderFactory {
 
   constructor() {
     this.providers.set('MANUAL', new ManualPaymentProvider());
-    this.providers.set('BAKONG', new BakongPaymentProvider());
-    this.providers.set('KHQR', new BakongPaymentProvider());
-    this.providers.set('ABA_PAYWAY', new PayWayPaymentProvider());
     this.providers.set('KHQRCC', new KHQRCCPaymentProvider());
   }
 

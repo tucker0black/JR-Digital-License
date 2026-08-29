@@ -2369,7 +2369,7 @@ describe('Customer Isolation', () => {
       id: 'payment-1',
       orderId: 'order-1',
       userId: 'user-1',
-      provider: 'KHQR',
+      provider: 'KHQRCC',
       status: 'PENDING',
       amount: new Prisma.Decimal('2.60'),
       currency: 'USD',
@@ -2611,5 +2611,132 @@ describe('Customer Isolation', () => {
       const options = prisma.banner.findMany.mock.calls[0][0];
       expect(options.orderBy).toEqual([{ sortOrder: 'asc' }, { createdAt: 'desc' }]);
       expect(options.take).toBe(20);
+    });
+  });
+
+  describe('POST /api/payments provider normalization (KHQRCC enforcement)', () => {
+    let app: ReturnType<typeof buildApp>;
+
+    const ORDER_ROW = {
+      id: 'order-norm-1',
+      userId: 'user-1',
+      status: 'DRAFT',
+      total: new Prisma.Decimal('5.00'),
+      currency: 'USD',
+      items: [{ id: 'item-1', productId: 'product-1', quantity: 1, unitPrice: new Prisma.Decimal('5.00'), total: new Prisma.Decimal('5.00') }]
+    };
+
+    const PAYMENT_ROW = {
+      id: 'payment-norm-1',
+      orderId: 'order-norm-1',
+      userId: 'user-1',
+      provider: 'KHQRCC',
+      status: 'PENDING',
+      amount: new Prisma.Decimal('5.00'),
+      currency: 'USD',
+      reference: 'JR-OR-NORM',
+      providerPaymentId: null,
+      idempotencyKey: 'idem-norm-test',
+      expiresAt: new Date(Date.now() + 15 * 60 * 1000),
+      paidAt: null,
+      metadata: null,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
+
+    beforeEach(() => {
+      vi.stubEnv('KHQRCC_PROFILE_ID', 'test_profile');
+      vi.stubEnv('KHQRCC_SECRET', 'test_secret');
+      vi.stubEnv('KHQRCC_SUCCESS_URL', 'https://example.com/success');
+      app = buildApp();
+      prisma.user.findUnique.mockResolvedValue(mockDbUser);
+      prisma.payment.findUnique.mockResolvedValue(null);
+      prisma.payment.findFirst.mockResolvedValue(null);
+      prisma.payment.create.mockResolvedValue(PAYMENT_ROW as never);
+      prisma.order.findUnique.mockResolvedValue(ORDER_ROW as never);
+      prisma.order.update.mockResolvedValue({} as never);
+    });
+
+    afterEach(async () => {
+      vi.clearAllMocks();
+      vi.unstubAllEnvs();
+      await app.close();
+    });
+
+    it('ROUTE NORMALIZATION: legacy ABA_PAYWAY is normalized to KHQRCC (backward compat for cached bundles)', async () => {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/payments',
+        headers: authHeaders,
+        payload: { orderId: 'order-norm-1', provider: 'ABA_PAYWAY', idempotencyKey: 'idem-norm-aba' }
+      });
+
+      expect(response.statusCode).toBe(201);
+      const createCall = prisma.payment.create.mock.calls[0];
+      expect(createCall[0].data.provider).toBe('KHQRCC');
+    });
+
+    it('ROUTE NORMALIZATION: legacy KHQR is normalized to KHQRCC (backward compat for cached bundles)', async () => {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/payments',
+        headers: authHeaders,
+        payload: { orderId: 'order-norm-1', provider: 'KHQR', idempotencyKey: 'idem-norm-khqr' }
+      });
+
+      expect(response.statusCode).toBe(201);
+      const createCall = prisma.payment.create.mock.calls[0];
+      expect(createCall[0].data.provider).toBe('KHQRCC');
+    });
+
+    it('ROUTE NORMALIZATION: KHQRCC passes through unchanged', async () => {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/payments',
+        headers: authHeaders,
+        payload: { orderId: 'order-norm-1', provider: 'KHQRCC', idempotencyKey: 'idem-norm-khqrcc' }
+      });
+
+      expect(response.statusCode).toBe(201);
+      const createCall = prisma.payment.create.mock.calls[0];
+      expect(createCall[0].data.provider).toBe('KHQRCC');
+    });
+
+    it('ROUTE NORMALIZATION: unknown providers are rejected', async () => {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/payments',
+        headers: authHeaders,
+        payload: { orderId: 'order-norm-1', provider: 'FAKE_PROVIDER', idempotencyKey: 'idem-norm-fake' }
+      });
+
+      expect(response.statusCode).toBe(400);
+      expect(response.json().error).toBe('Invalid payment provider');
+      expect(prisma.payment.create).not.toHaveBeenCalled();
+    });
+
+    it('ROUTE NORMALIZATION: proves legacy ABA_PAYWAY triggers normalization and creates KHQRCC payment', async () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/payments',
+        headers: authHeaders,
+        payload: { orderId: 'order-norm-1', provider: 'ABA_PAYWAY', idempotencyKey: 'idem-norm-live-proof' }
+      });
+
+      expect(response.statusCode).toBe(201);
+      expect(prisma.payment.create).toHaveBeenCalled();
+      const createCall = prisma.payment.create.mock.calls[0];
+      expect(createCall[0].data.provider).toBe('KHQRCC');
+
+      const normalizationWarning = warnSpy.mock.calls.find((call: unknown[]) =>
+        typeof call[0] === 'string' && call[0].includes('Normalizing')
+      );
+      expect(normalizationWarning).toBeDefined();
+      expect(String(normalizationWarning![0])).toContain('ABA_PAYWAY');
+      expect(String(normalizationWarning![0])).toContain('KHQRCC');
+
+      warnSpy.mockRestore();
     });
   });

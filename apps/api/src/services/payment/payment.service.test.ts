@@ -1325,4 +1325,84 @@ describe('PaymentService', () => {
       expect(result.payment?.paymentUrl).toBeDefined();
     });
   });
+
+  describe('KHQRCC-only payment simplification', () => {
+    it('TEST 7: createPayment always routes to KHQRCC when called with KHQRCC', async () => {
+      mock.prisma.payment.findUnique.mockResolvedValue(null);
+      mock.prisma.order.findUnique.mockResolvedValue(ORDER_ROW);
+      mock.prisma.payment.findFirst.mockResolvedValue(null);
+      mock.prisma.payment.create.mockResolvedValue({
+        ...PAYMENT_ROW,
+        provider: 'KHQRCC',
+        amount: new Prisma.Decimal('5.00')
+      });
+
+      const result = await service.createPayment('user-1', 'order-1', 'KHQRCC', 'idem-khqrcc-only-1');
+
+      expect(result.success).toBe(true);
+      const createCall = mock.prisma.payment.create.mock.calls[0];
+      expect(createCall[0].data.provider).toBe('KHQRCC');
+    });
+
+    it('TEST 8: createDepositPayment always uses KHQRCC', async () => {
+      mock.prisma.payment.findUnique.mockResolvedValue(null);
+      mock.prisma.payment.findFirst.mockResolvedValue(null);
+      mock.prisma.payment.create.mockResolvedValue({
+        ...PAYMENT_ROW,
+        orderId: null,
+        provider: 'KHQRCC',
+        amount: new Prisma.Decimal('10.00'),
+        reference: 'dep-khqrcc-only'
+      });
+
+      const result = await service.createDepositPayment('user-1', 10.00, 'USD', 'idem-dep-khqrcc-only');
+
+      expect(result.success).toBe(true);
+      const createCall = mock.prisma.payment.create.mock.calls[0];
+      expect(createCall[0].data.provider).toBe('KHQRCC');
+    });
+
+    it('TEST 9: DefaultPaymentProviderFactory only registers MANUAL and KHQRCC — no PayWay or Bakong', () => {
+      const freshFactory = new DefaultPaymentProviderFactory();
+      const khqrcc = freshFactory.getProvider('KHQRCC');
+      expect(khqrcc.providerType).toBe('KHQRCC');
+
+      const manual = freshFactory.getProvider('MANUAL');
+      expect(manual.providerType).toBe('MANUAL');
+
+      expect(() => freshFactory.getProvider('BAKONG')).toThrow('not implemented');
+      expect(() => freshFactory.getProvider('KHQR')).toThrow('not implemented');
+      expect(() => freshFactory.getProvider('ABA_PAYWAY')).toThrow('not implemented');
+    });
+
+    it('TEST 10: customer payment cannot select PayWay — route normalizes to KHQRCC', async () => {
+      mock.prisma.payment.findUnique.mockResolvedValue(null);
+      mock.prisma.order.findUnique.mockResolvedValue(ORDER_ROW);
+      mock.prisma.payment.findFirst.mockResolvedValue(null);
+      mock.prisma.payment.create.mockResolvedValue({
+        ...PAYMENT_ROW,
+        provider: 'KHQRCC',
+        amount: new Prisma.Decimal('5.00')
+      });
+
+      const result = await service.createPayment('user-1', 'order-1', 'KHQRCC', 'idem-no-payway');
+
+      expect(result.success).toBe(true);
+      const createCall = mock.prisma.payment.create.mock.calls[0];
+      expect(createCall[0].data.provider).toBe('KHQRCC');
+    });
+
+    it('TEST 11: KHQRCC provider returns checkout URL (not QR code data)', async () => {
+      mock.prisma.payment.findUnique.mockResolvedValue(null);
+      mock.prisma.order.findUnique.mockResolvedValue(ORDER_ROW);
+      mock.prisma.payment.findFirst.mockResolvedValue(null);
+      mock.prisma.payment.create.mockResolvedValue(PAYMENT_ROW);
+
+      const result = await service.createPayment('user-1', 'order-1', 'KHQRCC', 'idem-khqrcc-url');
+
+      expect(result.success).toBe(true);
+      expect(result.payment?.paymentUrl).toBeDefined();
+      expect(result.payment?.paymentUrl).toContain('khqr.cc');
+    });
+  });
 });

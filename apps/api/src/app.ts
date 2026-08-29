@@ -364,6 +364,19 @@ export function buildApp() {
     timestamp: new Date().toISOString()
   }));
 
+  // Deployment verification — proves which commit is live and which provider
+  // path customer payments use. Call this endpoint after deploying to confirm
+  // the KHQRCC normalization is active.
+  app.get('/api/health/deployment', async () => ({
+    status: 'ok' as const,
+    paymentProviderNormalization: 'KHQRCC',
+    // This string is the marker. If you see "KHQRCC" here, the normalization
+    // is active. If you see anything else, Railway is running old code.
+    customerPaymentProvider: 'KHQRCC',
+    providerSelection: 'POST /api/payments always uses selectedProvider=KHQRCC',
+    timestamp: new Date().toISOString()
+  }));
+
   // Connectivity-only diagnostic for deployments. Reports reachability and,
   // on failure, only the Prisma error class/code (never connection details).
   app.get('/api/health/database', async (request, reply) => {
@@ -1654,9 +1667,9 @@ export function buildApp() {
       return reply.status(400).send({ error: 'Invalid idempotency key' });
     }
 
-    // Customer-created payment sessions must use KHQRCC.
-    // Legacy providers (KHQR, BAKONG, ABA_PAYWAY) are normalized to KHQRCC
-    // so that stale Mini App bundles or cached clients still route correctly.
+    // Customer-created payment sessions MUST use KHQR.cc (KHQRCC).
+    // Legacy provider names (KHQR, BAKONG, ABA_PAYWAY) from cached Mini App
+    // bundles are silently normalized to KHQRCC.
     const validProviders = ['KHQR', 'BAKONG', 'ABA_PAYWAY', 'KHQRCC'];
     if (!validProviders.includes(body.provider)) {
       return reply.status(400).send({ error: 'Invalid payment provider' });
@@ -1665,7 +1678,7 @@ export function buildApp() {
     const requestedProvider = body.provider;
     const selectedProvider: PrismaPaymentProvider = 'KHQRCC';
     if (requestedProvider !== 'KHQRCC') {
-      console.warn(`[POST /api/payments] Normalizing provider "${requestedProvider}" → "${selectedProvider}" for user=${dbUser.id} orderId=${body.orderId}`);
+      console.warn(`[POST /api/payments] Normalizing legacy provider "${requestedProvider}" → "KHQRCC" for user=${dbUser.id} orderId=${body.orderId}`);
     }
     console.info(`[POST /api/payments] user=${dbUser.id} orderId=${body.orderId} requestedProvider=${requestedProvider} selectedProvider=${selectedProvider}`);
 
@@ -1900,188 +1913,6 @@ export function buildApp() {
     }
 
     return { order: result.order, payment: result.payment };
-  });
-
-  // ==================== ABA PAYWAY WEBHOOK ====================
-  app.post('/api/payments/webhook/payway', {
-    config: { rateLimit: { max: 60, timeWindow: '1 minute' } }
-  }, async (request, reply) => {
-    try {
-      const payload = request.body as Record<string, unknown>;
-
-      // --- Step 1: Verify HMAC-SHA512 signature ---
-      const signature = request.headers['x-payway-hmac-sha512'] as string | undefined;
-      const webhookApiKey = process.env.ABA_PAYWAY_API_KEY?.trim() || '';
-
-      if (!webhookApiKey) {
-        request.log.error('PayWay webhook: ABA_PAYWAY_API_KEY not configured — cannot verify signature');
-        return reply.status(500).send({ error: 'Webhook verification not configured' });
-      }
-
-      if (!signature) {
-        request.log.warn('PayWay webhook: missing X-PAYWAY-HMAC-SHA512 header');
-        return reply.status(401).send({ error: 'Missing signature' });
-      }
-
-      const rawBody = JSON.stringify(payload);
-      const expectedSignature = crypto.createHmac('sha512', webhookApiKey).update(rawBody).digest('base64');
-
-      const sigBuffer = Buffer.from(signature, 'base64');
-      const expectedBuffer = Buffer.from(expectedSignature, 'base64');
-
-      if (sigBuffer.length !== expectedBuffer.length || !crypto.timingSafeEqual(sigBuffer, expectedBuffer)) {
-        request.log.warn('PayWay webhook: invalid HMAC signature');
-        return reply.status(401).send({ error: 'Invalid signature' });
-      }
-
-      // --- Step 2: Extract and validate payload fields ---
-      const merchantId = (payload.merchant_id as string) || '';
-      const tranId = (payload.tran_id as string) || (payload.transaction_id as string) || '';
-      const bankRef = (payload.bank_ref as string) || '';
-      const apv = (payload.apv as string) || '';
-      const returnParams = (payload.return_params as string) || '';
-
-      if (!tranId) {
-        request.log.warn('PayWay webhook: missing tran_id');
-        return reply.status(400).send({ error: 'Missing transaction ID' });
-      }
-
-      // Validate merchant_id matches our configured merchant
-      const configuredMerchantId = process.env.ABA_PAYWAY_MERCHANT_ID?.trim() || '';
-      if (configuredMerchantId && merchantId !== configuredMerchantId) {
-        request.log.warn({ merchantId, configuredMerchantId }, 'PayWay webhook: merchant_id mismatch');
-        return reply.status(400).send({ error: 'Merchant ID mismatch' });
-      }
-
-      // --- Step 3: Find the payment record ---
-      const payment = await prisma.payment.findFirst({
-        where: {
-          OR: [
-            { reference: returnParams },
-            { providerPaymentId: tranId }
-          ]
-        },
-        include: { order: true }
-      });
-
-      if (!payment) {
-        request.log.warn({ tranId }, 'PayWay webhook: payment not found');
-        return reply.status(200).send({ status: 'ok' });
-      }
-
-      if (payment.status === 'SUCCEEDED') {
-        request.log.info({ paymentId: payment.id }, 'PayWay webhook: already succeeded (idempotent)');
-        return reply.status(200).send({ status: 'ok' });
-      }
-
-      if (payment.status === 'EXPIRED' || payment.status === 'CANCELLED' || payment.status === 'FAILED') {
-        request.log.warn({ paymentId: payment.id, status: payment.status }, 'PayWay webhook: terminal state');
-        return reply.status(200).send({ status: 'ok' });
-      }
-
-      // --- Step 4: Independent verification via Check Transaction API ---
-      const payWayProvider = paymentProviderFactory.getProvider('ABA_PAYWAY');
-      const verification = await payWayProvider.verifyPayment({
-        providerPaymentId: payment.providerPaymentId ?? tranId,
-        reference: payment.reference,
-        expectedAmount: payment.amount.toString(),
-        expectedCurrency: payment.currency
-      });
-
-      if (!verification.success || verification.status !== 'SUCCEEDED') {
-        request.log.info({
-          paymentId: payment.id,
-          verificationStatus: verification.status,
-          verificationError: verification.error
-        }, 'PayWay webhook: Check Transaction API did not confirm success');
-        return reply.status(200).send({ status: 'ok' });
-      }
-
-      // Verify amount from the authoritative Check Transaction response
-      if (verification.amount) {
-        const verified = parseFloat(verification.amount);
-        const expected = parseFloat(payment.amount.toString());
-        if (Math.abs(verified - expected) > 0.01) {
-          request.log.warn({ paymentId: payment.id, expected, verified }, 'PayWay webhook: amount mismatch after verification');
-          return reply.status(200).send({ status: 'ok' });
-        }
-      }
-
-      // Verify currency from the authoritative Check Transaction response
-      if (verification.currency) {
-        if (verification.currency.toUpperCase() !== payment.currency.toUpperCase()) {
-          request.log.warn({ paymentId: payment.id, expected: payment.currency, verified: verification.currency }, 'PayWay webhook: currency mismatch after verification');
-          return reply.status(200).send({ status: 'ok' });
-        }
-      }
-
-      // --- Step 5: Credit wallet exactly once ---
-      const paidAt = verification.paidAt ?? new Date();
-      await prisma.$transaction(async (tx) => {
-        const claim = await tx.payment.updateMany({
-          where: {
-            id: payment.id,
-            status: { in: ['PENDING', 'PROCESSING'] }
-          },
-          data: {
-            status: 'SUCCEEDED',
-            paidAt,
-            providerPaymentId: verification.providerPaymentId ?? tranId,
-            providerTransactionHash: verification.providerTransactionHash ?? (apv || tranId)
-          }
-        });
-
-        if (claim.count === 0) return;
-
-        if (!payment.orderId && walletService) {
-          await walletService.creditDeposit({
-            id: payment.id,
-            amount: payment.amount,
-            currency: payment.currency,
-            userId: payment.userId,
-            reference: payment.reference
-          }, tx);
-        }
-
-        if (payment.orderId) {
-          await tx.order.update({
-            where: { id: payment.orderId },
-            data: { status: 'PAID', paidAt }
-          });
-
-          const reservedStock = await tx.productStock.findMany({
-            where: { orderId: payment.orderId, status: 'RESERVED' }
-          });
-          if (reservedStock.length > 0) {
-            await tx.productStock.updateMany({
-              where: { orderId: payment.orderId, status: 'RESERVED' },
-              data: { status: 'SOLD', soldAt: new Date() }
-            });
-          }
-        }
-
-        await tx.paymentEvent.create({
-          data: {
-            paymentId: payment.id,
-            eventType: 'payment_succeeded',
-            payload: {
-              source: 'payway_webhook',
-              tranId,
-              bankRef,
-              apv,
-              verifiedAmount: verification.amount,
-              verifiedCurrency: verification.currency
-            }
-          }
-        });
-      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
-
-      request.log.info({ paymentId: payment.id, tranId }, 'PayWay webhook: payment credited');
-      return reply.status(200).send({ status: 'ok' });
-    } catch (error) {
-      request.log.error({ err: error }, 'PayWay webhook processing failed');
-      return reply.status(200).send({ status: 'ok' });
-    }
   });
 
   // ==================== KHQR.CC WEBHOOK ====================
@@ -4075,9 +3906,9 @@ export function buildApp() {
       return reply.status(404).send({ error: 'Payment not found' });
     }
 
-    if (payment.provider !== 'KHQR' && payment.provider !== 'BAKONG' && payment.provider !== 'ABA_PAYWAY' && payment.provider !== 'KHQRCC') {
+    if (payment.provider !== 'KHQRCC') {
       return reply.status(400).send({
-        error: `Only KHQR/Bakong/ABA PayWay/KHQRCC payments can be rechecked (this payment is ${payment.provider})`
+        error: `Only KHQRCC payments can be rechecked (this payment uses ${payment.provider})`
       });
     }
 

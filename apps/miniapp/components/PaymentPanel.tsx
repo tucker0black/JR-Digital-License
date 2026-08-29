@@ -10,7 +10,7 @@ export interface PaymentPanelProps {
   orderNumber?: number;
   orderTotal: string;
   orderCurrency: string;
-  provider?: 'KHQRCC' | 'KHQR';
+  provider?: 'KHQRCC';
   autoCreate?: boolean;
 }
 
@@ -271,7 +271,7 @@ export function PaymentPanel({
           <div className="flex flex-col items-center gap-2">
             <QrDisplay
               value={payment.qrCodeData}
-              alt={`Bakong KHQR for order ${orderNumber !== undefined ? `#${orderNumber}` : ''}`}
+              alt={`KHQR for order ${orderNumber !== undefined ? `#${orderNumber}` : ''}`}
             />
             <p className="text-center text-xs text-soft">{t('payment.scanToPayAnyApp')}</p>
           </div>
