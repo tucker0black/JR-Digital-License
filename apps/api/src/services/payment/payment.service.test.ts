@@ -154,7 +154,7 @@ class FakeKHQRCCProvider extends BasePaymentProvider {
       reference: params.reference,
       providerPaymentId: 'khqrcc-txn-789',
       expiresAt: params.expiresAt,
-      paymentUrl: `https://khqr.cc/api/payment/request/test_profile?transaction_id=${params.reference}&amount=${params.amount}`,
+      paymentUrl: `https://khqr.cc/api/payment/requestv2v2/test_profile?transaction_id=${params.reference}&amount=${params.amount}`,
       metadata: {
         transactionId: 'khqrcc-txn-789',
         mode: 'managed_checkout',
@@ -285,7 +285,7 @@ describe('PaymentService', () => {
       const result = await service.createDepositPayment('user-1', '5.00', 'USD', 'idem-dep-1');
 
       expect(result.success).toBe(true);
-      expect(result.payment?.paymentUrl).toContain('khqr.cc/api/payment/request');
+      expect(result.payment?.paymentUrl).toContain('khqr.cc/api/payment/requestv2');
       expect(result.payment?.reference).toBe('dep-1');
       expect(result.payment?.expiresAt).toBeInstanceOf(Date);
       expect(mock.prisma.payment.create).toHaveBeenCalledWith(
@@ -978,7 +978,7 @@ describe('PaymentService', () => {
       const result = await service.createDepositPayment('user-1', '5.00', 'USD', 'idem-dep-pw-1');
 
       expect(result.success).toBe(true);
-      expect(result.payment?.paymentUrl).toContain('khqr.cc/api/payment/request');
+      expect(result.payment?.paymentUrl).toContain('khqr.cc/api/payment/requestv2');
       expect(mock.prisma.payment.create).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({ provider: 'KHQRCC', status: 'PENDING' })
@@ -1044,7 +1044,7 @@ describe('PaymentService', () => {
       const result = await service.createDepositPayment('user-1', '10.00', 'USD', 'idem-dep-khqrcc-1');
 
       expect(result.success).toBe(true);
-      expect(result.payment?.paymentUrl).toContain('khqr.cc/api/payment/request');
+      expect(result.payment?.paymentUrl).toContain('khqr.cc/api/payment/requestv2');
       expect(result.payment?.paymentUrl).toContain('transaction_id=');
       expect(result.payment?.paymentUrl).toContain('amount=10.00');
       expect(result.payment?.qrCodeData).toBeUndefined();
@@ -1062,7 +1062,7 @@ describe('PaymentService', () => {
       const result = await service.createPayment('user-1', 'order-1', 'KHQRCC', 'idem-khqrcc-order');
 
       expect(result.success).toBe(true);
-      expect(result.payment?.paymentUrl).toContain('khqr.cc/api/payment/request');
+      expect(result.payment?.paymentUrl).toContain('khqr.cc/api/payment/requestv2');
       expect(result.payment?.qrCodeData).toBeUndefined();
       const created = mock.prisma.payment.create.mock.calls[0]?.[0].data;
       expect(created?.provider).toBe('KHQRCC');
@@ -1073,7 +1073,7 @@ describe('PaymentService', () => {
       mock.prisma.payment.findUnique.mockResolvedValue(null);
       const khqrccMetadata = {
         transactionId: 'khqrcc-txn-789',
-        checkoutUrl: 'https://khqr.cc/api/payment/request/profile?transaction_id=dep-khqrcc-resume&amount=5.00',
+        checkoutUrl: 'https://khqr.cc/api/payment/requestv2/profile?transaction_id=dep-khqrcc-resume&amount=5.00',
         mode: 'managed_checkout'
       };
       const activeRow = {

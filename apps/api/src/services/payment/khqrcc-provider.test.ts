@@ -9,7 +9,7 @@ beforeEach(() => {
   process.env = { ...ORIGINAL_ENV };
   process.env.KHQRCC_PROFILE_ID = 'test_profile_123';
   process.env.KHQRCC_SECRET = 'test_secret_abc';
-  process.env.KHQRCC_GATEWAY_URL = 'https://khqr.cc/api/payment/request';
+  process.env.KHQRCC_GATEWAY_URL = 'https://khqr.cc/api/payment/requestv2';
   process.env.KHQRCC_SUCCESS_URL = 'https://example.com/webhook/khqrcc';
 });
 
@@ -186,7 +186,7 @@ describe('KHQRCCPaymentProvider.createPayment', () => {
 
     expect(result.success).toBe(true);
     expect(result.paymentUrl).toBeDefined();
-    expect(result.paymentUrl).toContain('khqr.cc/api/payment/request/test_profile_123');
+    expect(result.paymentUrl).toContain('khqr.cc/api/payment/requestv2/test_profile_123');
     expect(result.paymentUrl).toContain('transaction_id=JR-DP-TEST-001');
     expect(result.paymentUrl).toContain('amount=5.00');
     expect(result.paymentUrl).toContain('success_url=');

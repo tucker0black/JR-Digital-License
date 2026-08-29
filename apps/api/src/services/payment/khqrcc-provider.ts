@@ -40,7 +40,7 @@ export interface KHQRCCWebhookPayload {
   hash?: string;
 }
 
-const DEFAULT_GATEWAY_URL = 'https://khqr.cc/api/payment/request';
+const DEFAULT_GATEWAY_URL = 'https://khqr.cc/api/payment/requestv2';
 const CONNECTIVITY_MESSAGE = 'KHQR.cc payment is blocked by provider connectivity or configuration.';
 const MISSING_CONFIGURATION_MESSAGE = 'KHQR.cc payment is not configured. Set KHQRCC_PROFILE_ID and KHQRCC_SECRET.';
 
@@ -199,7 +199,8 @@ export class KHQRCCPaymentProvider extends BasePaymentProvider {
     }
 
     try {
-      const verifyUrl = `${this.config.gatewayUrl.replace('/api/payment/request', '')}/${this.config.profileId}/payment-gateway/v1/payments/check-trans`;
+      const baseUrl = new URL(this.config.gatewayUrl).origin;
+      const verifyUrl = `${baseUrl}/${this.config.profileId}/payment-gateway/v1/payments/check-trans`;
       const hash = generateVerificationHash(this.config.secret, transactionId);
 
       const controller = new AbortController();

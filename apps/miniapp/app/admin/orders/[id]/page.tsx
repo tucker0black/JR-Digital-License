@@ -303,7 +303,7 @@ export default function AdminOrderDetailPage() {
                 <td className="px-3 py-2 text-slate-400">{formatDate(payment.createdAt)}</td>
                 <td className="px-3 py-2 text-slate-400">{formatDate(payment.paidAt)}</td>
                 <td className="px-3 py-2">
-                  {(payment.provider === 'KHQR' || payment.provider === 'BAKONG') &&
+                  {(payment.provider === 'KHQRCC' || payment.provider === 'KHQR' || payment.provider === 'BAKONG') &&
                     (payment.status === 'PENDING' || payment.status === 'PROCESSING') && (
                     <Button
                       variant="ghost"

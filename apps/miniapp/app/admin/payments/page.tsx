@@ -8,7 +8,7 @@ import { humanizeError } from '@/lib/errors';
 import { expireOldAdminPayments, getAdminPayments, getDashboardStats } from '@/lib/api-admin';
 
 const PAYMENT_STATUSES = ['PENDING', 'PROCESSING', 'SUCCEEDED', 'FAILED', 'EXPIRED', 'CANCELLED', 'REFUNDED'];
-const PAYMENT_PROVIDERS = ['KHQR', 'BAKONG', 'WALLET', 'MANUAL', 'ABA_PAYWAY', 'KHQRCC'];
+const PAYMENT_PROVIDERS = ['KHQRCC', 'WALLET', 'MANUAL', 'KHQR', 'BAKONG', 'ABA_PAYWAY'];
 
 export default function AdminPaymentsPage() {
   const [page, setPage] = useState(1);
