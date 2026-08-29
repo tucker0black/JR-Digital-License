@@ -4068,9 +4068,9 @@ export function buildApp() {
       return reply.status(404).send({ error: 'Payment not found' });
     }
 
-    if (payment.provider !== 'KHQR' && payment.provider !== 'BAKONG' && payment.provider !== 'ABA_PAYWAY') {
+    if (payment.provider !== 'KHQR' && payment.provider !== 'BAKONG' && payment.provider !== 'ABA_PAYWAY' && payment.provider !== 'KHQRCC') {
       return reply.status(400).send({
-        error: `Only KHQR/Bakong/ABA PayWay payments can be rechecked (this payment is ${payment.provider})`
+        error: `Only KHQR/Bakong/ABA PayWay/KHQRCC payments can be rechecked (this payment is ${payment.provider})`
       });
     }
 

@@ -108,15 +108,25 @@ export class AdminWalletService {
     reason: string,
     adminId: string
   ) {
-    const amount = new Prisma.Decimal(amountInput.toString());
+    let amount: Prisma.Decimal;
+    try {
+      amount = new Prisma.Decimal(amountInput.toString());
+    } catch {
+      throw new Error('Adjustment amount is invalid');
+    }
+    if (!amount.isFinite()) {
+      throw new Error('Adjustment amount must be a finite number');
+    }
     if (amount.isZero()) {
       throw new Error('Adjustment amount must not be zero');
     }
+    // Wallet columns are Decimal(18,2): reject anything beyond 2dp so the
+    // stored amount, ledger entry, and balance stay exact.
+    if (amount.decimalPlaces() > 2) {
+      throw new Error('Adjustment amount supports at most 2 decimal places');
+    }
     if (type === 'BONUS' && amount.isNegative()) {
       throw new Error('Bonus amount must be positive');
-    }
-    if (type === 'ADJUSTMENT' && !amount.isInteger()) {
-      throw new Error('Adjustment amount must be a whole number of currency units');
     }
 
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
@@ -169,11 +179,11 @@ export class AdminWalletService {
           entityType: 'Wallet',
           entityId: userId,
           action: 'ADJUST_BALANCE',
-          oldValue: { balance: balanceBefore.toString() },
+          oldValue: { balance: balanceBefore.toFixed(2) },
           newValue: {
             type,
-            amount: amount.toString(),
-            balance: balanceAfter.toString(),
+            amount: amount.toFixed(2),
+            balance: balanceAfter.toFixed(2),
             reason,
             reference
           }
@@ -184,12 +194,12 @@ export class AdminWalletService {
         id: wallet.id,
         userId: wallet.userId,
         currency: wallet.currency,
-        balance: balanceAfter.toString(),
+        balance: balanceAfter.toFixed(2),
         transaction: {
           type,
-          amount: amount.toString(),
-          balanceBefore: balanceBefore.toString(),
-          balanceAfter: balanceAfter.toString(),
+          amount: amount.toFixed(2),
+          balanceBefore: balanceBefore.toFixed(2),
+          balanceAfter: balanceAfter.toFixed(2),
           reference,
           reason
         }

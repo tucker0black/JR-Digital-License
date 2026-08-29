@@ -9,7 +9,12 @@ import { ToastHost } from '@/components/Toast';
 
 export const metadata: Metadata = {
   title: 'JR Digital license',
-  description: 'Digital products and services in Telegram'
+  description: 'Digital products and services in Telegram',
+  icons: {
+    icon: '/jr-logo.webp',
+    shortcut: '/jr-logo.webp',
+    apple: '/jr-logo.webp',
+  },
 };
 
 // viewport-fit=cover is required for env(safe-area-inset-*) to resolve

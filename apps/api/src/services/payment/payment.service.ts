@@ -455,6 +455,11 @@ export class PaymentService {
       (typeof metadata.checkoutQrUrl === 'string' && metadata.checkoutQrUrl) ||
       undefined;
 
+    const paymentUrl =
+      (typeof metadata.checkoutUrl === 'string' && metadata.checkoutUrl) ||
+      (typeof metadata.paymentUrl === 'string' && metadata.paymentUrl) ||
+      undefined;
+
     return {
       success: true,
       resumed: true,
@@ -463,6 +468,7 @@ export class PaymentService {
         reference: payment.reference,
         providerPaymentId: payment.providerPaymentId ?? undefined,
         expiresAt: payment.expiresAt ?? undefined,
+        paymentUrl,
         qrCodeData,
         qrCodeImage,
         merchantName,

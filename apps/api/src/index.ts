@@ -17,13 +17,20 @@ async function runExpirationWorker(): Promise<void> {
   running = true;
   try {
     const { PaymentExpirationService } = await import('./services/payment/payment-expiration.service.js');
-    const service = new PaymentExpirationService(prisma);
-    const result = await service.expireOldPayments(PAYMENT_EXPIRATION_MAX_AGE_MINUTES);
-    if (result.expiredCount > 0) {
-      app.log.info({ expiredCount: result.expiredCount }, 'Expired overdue payment sessions');
+    const paymentService = new PaymentExpirationService(prisma);
+    const paymentResult = await paymentService.expireOldPayments(PAYMENT_EXPIRATION_MAX_AGE_MINUTES);
+    if (paymentResult.expiredCount > 0) {
+      app.log.info({ expiredCount: paymentResult.expiredCount }, 'Expired overdue payment sessions');
+    }
+
+    const { ReservationExpirationService } = await import('./services/reservation-expiration.service.js');
+    const reservationService = new ReservationExpirationService(prisma);
+    const reservationResult = await reservationService.expireOldReservations(PAYMENT_EXPIRATION_MAX_AGE_MINUTES);
+    if (reservationResult.releasedCount > 0) {
+      app.log.info({ releasedCount: reservationResult.releasedCount }, 'Released expired stock reservations');
     }
   } catch (error) {
-    app.log.error({ err: error }, 'Payment expiration worker failed');
+    app.log.error({ err: error }, 'Expiration worker failed');
   } finally {
     running = false;
   }

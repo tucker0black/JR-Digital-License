@@ -1,9 +1,11 @@
 'use client';
 
 import Link from 'next/link';
+import Image from 'next/image';
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { adminLogout, checkAdminAuth, getAdminPendingHandDeliveryCount, getAdminToken, getAdminTicketUnreadCount, isAdminApiError } from '@/lib/api-admin';
+import { appName } from '@jr/shared';
 
 const NAV_ITEMS: Array<{ href: string; label: string; icon?: string } | { divider: true }> = [
   { href: '/admin', label: 'Dashboard', icon: 'M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-4 0a1 1 0 01-1-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 01-1 1' },
@@ -209,8 +211,20 @@ export default function AdminLayout({ children }: Readonly<{ children: React.Rea
       <aside className="fixed inset-y-0 left-0 z-50 hidden w-60 border-r border-line/30 bg-surface/80 backdrop-blur-xl lg:block">
         <div className="flex h-full flex-col">
           <div className="border-b border-line/30 px-5 py-5">
-            <p className="text-sm font-bold tracking-premium text-ink">JR Digital license</p>
-            <p className="mt-0.5 text-[11px] font-medium text-primary">Admin Dashboard</p>
+            <div className="flex items-center gap-2.5">
+              <Image
+                src="/jr-logo.webp"
+                alt={`${appName} logo`}
+                width={28}
+                height={28}
+                sizes="28px"
+                className="shrink-0 object-contain"
+              />
+              <div className="min-w-0">
+                <p className="text-sm font-bold tracking-premium text-ink truncate">{appName}</p>
+                <p className="mt-0.5 text-[11px] font-medium text-primary truncate">Admin Dashboard</p>
+              </div>
+            </div>
           </div>
           <nav className="flex-1 overflow-y-auto px-3 py-3">
             <div className="space-y-0.5">
@@ -236,9 +250,19 @@ export default function AdminLayout({ children }: Readonly<{ children: React.Rea
       <aside className={`fixed inset-y-0 left-0 z-50 w-64 border-r border-line/30 bg-surface/95 backdrop-blur-xl transition-transform duration-200 lg:hidden ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         <div className="flex h-full flex-col">
           <div className="flex items-center justify-between border-b border-line/30 px-5 py-4">
-            <div>
-              <p className="text-sm font-bold tracking-premium text-ink">JR Digital license</p>
-              <p className="mt-0.5 text-[11px] font-medium text-primary">Admin Dashboard</p>
+            <div className="flex items-center gap-2.5">
+              <Image
+                src="/jr-logo.webp"
+                alt={`${appName} logo`}
+                width={28}
+                height={28}
+                sizes="28px"
+                className="shrink-0 object-contain"
+              />
+              <div className="min-w-0">
+                <p className="text-sm font-bold tracking-premium text-ink truncate">{appName}</p>
+                <p className="mt-0.5 text-[11px] font-medium text-primary truncate">Admin Dashboard</p>
+              </div>
             </div>
             <button
               type="button"
@@ -282,7 +306,17 @@ export default function AdminLayout({ children }: Readonly<{ children: React.Rea
                   <path d="M4 6h16M4 12h16M4 18h16" />
                 </svg>
               </button>
-              <p className="text-sm font-bold tracking-premium text-ink">JR Digital license</p>
+              <div className="flex items-center gap-2.5">
+                <Image
+                  src="/jr-logo.webp"
+                  alt={`${appName} logo`}
+                  width={24}
+                  height={24}
+                  sizes="24px"
+                  className="shrink-0 object-contain"
+                />
+                <p className="text-sm font-bold tracking-premium text-ink truncate">{appName}</p>
+              </div>
             </div>
             <button
               type="button"

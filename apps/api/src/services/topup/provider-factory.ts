@@ -13,6 +13,11 @@ PROVIDER_REGISTRY.set('fazercards', async () => {
   return FazerCardsTopUpProvider;
 });
 
+PROVIDER_REGISTRY.set('volsever', async () => {
+  const { VolseverTopUpProvider } = await import('./volsever-provider.js');
+  return VolseverTopUpProvider;
+});
+
 export async function createTopUpProvider(record: TopUpProviderRecord): Promise<TopUpProvider> {
   const normalizedName = (record.name ?? '').toLowerCase().replace(/[\s_-]/g, '');
 

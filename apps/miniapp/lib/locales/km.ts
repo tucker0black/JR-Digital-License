@@ -345,7 +345,7 @@ const km: TranslationKeys = {
     transactions: 'ប្រវត្តិនៃប្រតិបត្តិការ',
     noTransactions: 'មិនទាន់មានប្រវត្តិប្រតិបត្តិការ។ ដាក់ប្រាក់ទៅកាបូបលុយដើម្បីចាប់ផ្ដើម។',
     balanceLabel: 'សមតុល្យ',
-    depositViaPayWay: 'ដាក់ប្រាក់តាមរយៈ KHQR / ABA Pay',
+    depositViaPayWay: 'ដាក់ប្រាក់តាមរយៈ KHQR',
     chooseAmount: 'ជ្រើសចំនួនប្រាក់។ អ្នកនឹងត្រូវបានបញ្ជូនទៅ KHQR.cc ដើម្បីបញ្ចប់ការទូទាត់។',
     customAmount: 'ចំនួនប្រាក់ផ្ទាល់ខ្លួន',
     createDepositPayWay: 'បង្កើតការដាក់ប្រាក់',
@@ -360,8 +360,8 @@ const km: TranslationKeys = {
     cancelledDescription: 'សម័យការទូទាត់ត្រូវបានលុបចោល។ លុយមិនត្រូវបានគិតថ្លៃ — អ្នកអាចបង្កើតការដាក់ប្រាក់ថ្មី។',
     failedDescription: 'ការដាក់ប្រាក់មិនអាចបញ្ចប់បាន។ លុយមិនត្រូវបានគិតថ្លៃ។',
     payWayPayment: 'ការទូទាត់ KHQR',
-    openAbaMobile: 'បើក ABA Mobile',
-    deeplinkNote: 'ចុចដើម្បីបង់ប្រាក់ដោយផ្ទាល់ក្នុងកម្មវិធី ABA Mobile។',
+    openAbaMobile: 'បើកទំព័របង់ប្រាក់',
+    deeplinkNote: 'អ្នកនឹងត្រូវបានបញ្ជូនទៅ KHQR.cc ដើម្បីបញ្ចប់ការទូទាត់។',
     reference: 'លេខសម្គាល់',
     merchant: 'ឈ្មួញ',
     amount: 'ចំនួនប្រាក់',
@@ -388,6 +388,8 @@ const km: TranslationKeys = {
     txExpired: 'ផុតកំណត់',
     resumedSessionNote: 'វេនទូទាត់សម្រាប់ចំនួនតែមួយកំពុងដំណើរការរួចហើយ ហើយត្រូវបានរក្សាទុក — វានៅតែមានសុពលភាពរហូតដល់ផុតកំណត់។ អ្នកអាចបោះបង់វាខាងក្រោម ហើយបង្កើតថ្មី។',
     balanceAfterLabel: 'សមតុល្យ: {amount}',
+    payNow: 'បង់ប្រាក់ឥឡូវនេះ',
+    checkoutNote: 'អ្នកនឹងត្រូវបានបញ្ជូនទៅ KHQR.cc ដើម្បីបញ្ចប់ការទូទាត់',
   },
   // Top Up
   topUp: {

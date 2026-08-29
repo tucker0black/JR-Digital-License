@@ -143,10 +143,16 @@ function createBotApiClient(apiUrl: string, apiSecret: string): BotApiClient {
         body: body !== undefined ? JSON.stringify(body) : undefined
       });
       if (!response.ok) {
+        // Sanitized diagnostic: status + endpoint only. Never log secrets.
+        console.warn(
+          `[bot-api] ${method} ${path} -> ${response.status}; check BOT_SECRET parity and API reachability`
+        );
         return null;
       }
       return (await response.json()) as T;
-    } catch {
+    } catch (error) {
+      const errorClass = error instanceof Error ? error.name : 'UnknownError';
+      console.warn(`[bot-api] ${method} ${path} failed (${errorClass}); is NEXT_PUBLIC_API_URL correct?`);
       return null;
     }
   }

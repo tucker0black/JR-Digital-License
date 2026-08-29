@@ -18,6 +18,8 @@ async function configureMenuButton(bot: ReturnType<typeof createBot>, miniAppUrl
   }
 }
 
+const RESTART_RETRY_MS = 30_000;
+
 async function start(): Promise<void> {
   const config = loadBotConfig();
   const bot = createBot(config.token, config.miniAppUrl, config.apiUrl, config.apiSecret);
@@ -33,10 +35,30 @@ async function start(): Promise<void> {
     console.warn('Failed to register Khmer command descriptions.', error);
   }
   await configureMenuButton(bot, config.miniAppUrl);
-  await bot.start({
-    allowed_updates: ['message', 'callback_query'],
-    onStart: (botInfo) => console.info(`Telegram bot started as @${botInfo.username}`)
-  });
+
+  // A second polling instance anywhere (an forgotten `pnpm dev` on another
+  // machine, a stale deployment) makes Telegram answer getUpdates with 409.
+  // Instead of crash-looping, stay alive and retry so this service takes over
+  // polling automatically as soon as the competing instance stops.
+  for (;;) {
+    try {
+      await bot.start({
+        allowed_updates: ['message', 'callback_query'],
+        onStart: (botInfo) => console.info(`Telegram bot started as @${botInfo.username}`)
+      });
+      return;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!/409|Conflict|terminated by other getUpdates/i.test(message)) {
+        throw error;
+      }
+      console.warn(
+        'getUpdates conflict: another bot instance is polling with this token. ' +
+          'Retrying in 30s — stop the duplicate instance to let this service take over.'
+      );
+      await new Promise((resolve) => setTimeout(resolve, RESTART_RETRY_MS));
+    }
+  }
 }
 
 void start().catch((error: unknown) => {
