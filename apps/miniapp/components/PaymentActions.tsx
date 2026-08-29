@@ -171,7 +171,7 @@ export function PaymentActions({
         >
           <span className="text-lg">&#x1F3E6;</span>
           <span>{t('payment.payWithAbaPayway')}</span>
-          <span className="text-xs text-soft">{t('payment.scanOrPay')}</span>
+          <span className="text-xs text-soft">{t('payment.payViaAbaCheckout')}</span>
         </button>
       </div>
 

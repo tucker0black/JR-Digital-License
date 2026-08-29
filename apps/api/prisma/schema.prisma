@@ -82,6 +82,7 @@ enum PaymentProvider {
   WALLET
   MANUAL
   ABA_PAYWAY
+  KHQRCC
 }
 
 enum WalletTransactionType {

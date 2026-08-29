@@ -384,7 +384,7 @@ function WalletContent() {
         {/* Deposit form */}
         {depositOpen && !depositPayment && !conflictPayment && (
           <section className="animate-fade-up mt-4 rounded-2xl card-cosmic p-5">
-            <h2 className="font-semibold text-ink">{t('wallet.depositViaKHQR')}</h2>
+            <h2 className="font-semibold text-ink">{t('wallet.depositViaKhqrcc')}</h2>
             <p className="mt-1 text-sm text-soft">
               {t('wallet.chooseAmount')}
             </p>
@@ -428,7 +428,7 @@ function WalletContent() {
               disabled={depositCreating}
               className="mt-5 rounded-xl bg-gradient-to-r from-primary to-violet px-5 py-3 font-semibold text-white shadow-md shadow-primary/20 transition-default hover:shadow-lg active:scale-95 disabled:opacity-50"
             >
-              {depositCreating ? t('wallet.creatingPayment') : t('wallet.createDepositQR')}
+              {depositCreating ? t('wallet.creatingPayment') : t('wallet.createDepositPayWay')}
             </button>
           </section>
         )}
@@ -475,7 +475,7 @@ function WalletContent() {
             </section>
           )}
 
-        {/* Active payment QR */}
+        {/* Active payment checkout */}
         {depositPayment && !TERMINAL_STATUSES.includes(depositStatus) && (
           <section className="animate-fade-up mt-4 rounded-2xl card-cosmic p-5">
             {depositPayment.resumed && (
@@ -484,7 +484,7 @@ function WalletContent() {
               </p>
             )}
             <div className="flex items-center justify-between">
-              <h2 className="font-semibold text-ink">{t('wallet.scanToDeposit')}</h2>
+              <h2 className="font-semibold text-ink">{t('wallet.payWayPayment')}</h2>
               <span className="rounded-lg border border-line bg-muted px-3 py-1 text-xs font-medium text-soft">
                 {depositStatus}
               </span>
@@ -515,42 +515,43 @@ function WalletContent() {
                 </div>
               )}
             </div>
-            {depositPayment.qrCodeData && (
+            {depositPayment.paymentUrl ? (
+              <div className="mt-5">
+                <a
+                  href={depositPayment.paymentUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="block w-full rounded-xl bg-gradient-to-r from-primary to-violet px-5 py-3 text-center font-semibold text-white shadow-md shadow-primary/20 transition-default hover:shadow-lg active:scale-95"
+                >
+                  {t('wallet.payNow') || 'Pay Now'}
+                </a>
+                <p className="mt-2 text-center text-xs text-soft">
+                  {t('wallet.checkoutNote') || 'You will be redirected to KHQR.cc to complete payment'}
+                </p>
+              </div>
+            ) : depositPayment.qrCodeData ? (
               <>
                 <div className="mt-5 flex flex-col items-center gap-2">
                   <QrDisplay
                     value={depositPayment.qrCodeData}
-                    alt="ABA PayWay KHQR deposit"
+                    alt="KHQR deposit"
                   />
                   <p className="text-center text-xs text-soft">{t('payment.scanToPayAnyApp')}</p>
                 </div>
               </>
-            )}
+            ) : null}
             {depositPayment.abapayDeeplink && (
-              <button
-                type="button"
-                onClick={() => {
-                  const deeplink = depositPayment.abapayDeeplink!;
-                  const tg = window.Telegram?.WebApp;
-                  if (tg?.openLink) {
-                    tg.openLink(deeplink, { try_instant_view: false });
-                  } else {
-                    const iframe = document.createElement('iframe');
-                    iframe.style.display = 'none';
-                    iframe.src = deeplink;
-                    document.body.appendChild(iframe);
-                    setTimeout(() => document.body.removeChild(iframe), 3000);
-                  }
-                }}
-                className="mt-4 block w-full rounded-xl bg-gradient-to-r from-primary to-violet px-4 py-3 text-center font-semibold text-white shadow-md shadow-primary/20 transition-default hover:shadow-lg active:scale-95"
-              >
-                {t('payment.openAbaMobile')}
-              </button>
-            )}
-            {depositPayment.abapayDeeplink && (
-              <p className="text-center text-xs text-soft">
-                {t('payment.deeplinkFallback')}
-              </p>
+              <div className="mt-4">
+                <a
+                  href={depositPayment.abapayDeeplink}
+                  className="block w-full rounded-xl bg-gradient-to-r from-primary to-violet px-5 py-3 text-center font-semibold text-white shadow-md shadow-primary/20 transition-default hover:shadow-lg active:scale-95"
+                >
+                  {t('wallet.openAbaMobile')}
+                </a>
+                <p className="mt-2 text-center text-xs text-soft">
+                  {t('wallet.deeplinkNote')}
+                </p>
+              </div>
             )}
             {depositVerificationError && (
               <p className="mt-4 rounded-xl border border-warning/30 bg-warning/10 px-3 py-2 text-center text-xs text-warning">

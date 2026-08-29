@@ -10,7 +10,7 @@ export interface PaymentPanelProps {
   orderNumber?: number;
   orderTotal: string;
   orderCurrency: string;
-  provider?: 'ABA_PAYWAY';
+  provider?: 'ABA_PAYWAY' | 'KHQR';
   autoCreate?: boolean;
 }
 
@@ -271,33 +271,11 @@ export function PaymentPanel({
           <div className="flex flex-col items-center gap-2">
             <QrDisplay
               value={payment.qrCodeData}
-              alt={`ABA PayWay KHQR for order ${orderNumber !== undefined ? `#${orderNumber}` : ''}`}
+              alt={`Bakong KHQR for order ${orderNumber !== undefined ? `#${orderNumber}` : ''}`}
             />
             <p className="text-center text-xs text-soft">{t('payment.scanToPayAnyApp')}</p>
           </div>
         </>
-      )}
-
-      {payment.abapayDeeplink && (
-        <button
-          type="button"
-          onClick={() => {
-            const deeplink = payment.abapayDeeplink!;
-            const tg = window.Telegram?.WebApp;
-            if (tg?.openLink) {
-              tg.openLink(deeplink, { try_instant_view: false });
-            } else {
-              const iframe = document.createElement('iframe');
-              iframe.style.display = 'none';
-              iframe.src = deeplink;
-              document.body.appendChild(iframe);
-              setTimeout(() => document.body.removeChild(iframe), 3000);
-            }
-          }}
-          className="block w-full rounded-xl bg-gradient-to-r from-primary to-violet px-4 py-3 text-center font-semibold text-white shadow-md shadow-primary/20 transition-default hover:shadow-lg active:scale-95"
-        >
-          {t('payment.openAbaMobile')}
-        </button>
       )}
 
       {payment.abapayDeeplink && (

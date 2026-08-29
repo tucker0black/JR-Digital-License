@@ -4,6 +4,7 @@ import { Prisma } from '@prisma/client';
 import { ManualPaymentProvider } from './manual-provider.js';
 import { BakongPaymentProvider } from './bakong-provider.js';
 import { PayWayPaymentProvider } from './payway-provider.js';
+import { KHQRCCPaymentProvider } from './khqrcc-provider.js';
 import type { BasePaymentProvider, VerifyPaymentParams} from './provider.js';
 import type { CustomerWalletService } from '../wallet.service.js';
 import type { TelegramNotificationService } from '../notifications/telegram-notification.service.js';
@@ -20,6 +21,7 @@ export class DefaultPaymentProviderFactory implements PaymentProviderFactory {
     this.providers.set('BAKONG', new BakongPaymentProvider());
     this.providers.set('KHQR', new BakongPaymentProvider());
     this.providers.set('ABA_PAYWAY', new PayWayPaymentProvider());
+    this.providers.set('KHQRCC', new KHQRCCPaymentProvider());
   }
 
   getProvider(type: PrismaPaymentProvider): BasePaymentProvider {
@@ -304,7 +306,7 @@ export class PaymentService {
       return { success: false, error: 'Payment with this idempotency key already exists' };
     }
 
-    const provider = 'ABA_PAYWAY' as PrismaPaymentProvider;
+    const provider = 'KHQRCC' as PrismaPaymentProvider;
     const providerInstance = this.factory.getProvider(provider);
     if (!providerInstance.isAvailable()) {
       return { success: false, error: providerInstance.getAvailabilityError() };
@@ -321,7 +323,9 @@ export class PaymentService {
     });
 
     if (existingDeposit) {
-      if (!new Prisma.Decimal(existingDeposit.amount).equals(amount)) {
+      if (existingDeposit.provider !== provider) {
+        await this.expirePayment(existingDeposit.id);
+      } else if (!new Prisma.Decimal(existingDeposit.amount).equals(amount)) {
         return {
           success: false,
           conflict: true,
@@ -334,8 +338,9 @@ export class PaymentService {
             expiresAt: existingDeposit.expiresAt
           }
         };
+      } else {
+        return this.resumePayment(existingDeposit);
       }
-      return this.resumePayment(existingDeposit);
     }
 
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000);

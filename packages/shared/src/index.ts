@@ -319,7 +319,7 @@ export type CreateStockResponse = z.infer<typeof createStockResponseSchema>;
 export const paymentStatusSchema = z.enum(['PENDING', 'PROCESSING', 'SUCCEEDED', 'FAILED', 'EXPIRED', 'CANCELLED', 'REFUNDED']);
 export type PaymentStatus = z.infer<typeof paymentStatusSchema>;
 
-export const paymentProviderSchema = z.enum(['KHQR', 'BAKONG', 'WALLET', 'MANUAL']);
+export const paymentProviderSchema = z.enum(['KHQR', 'BAKONG', 'WALLET', 'MANUAL', 'ABA_PAYWAY']);
 export type PaymentProvider = z.infer<typeof paymentProviderSchema>;
 
 export const paymentSchema = z.object({

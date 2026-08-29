@@ -1,6 +1,6 @@
 export interface PaymentProvider {
   readonly name: string;
-  readonly providerType: 'KHQR' | 'BAKONG' | 'WALLET' | 'MANUAL' | 'ABA_PAYWAY';
+  readonly providerType: 'KHQR' | 'BAKONG' | 'WALLET' | 'MANUAL' | 'ABA_PAYWAY' | 'KHQRCC';
 
   createPayment(params: CreatePaymentParams): Promise<CreatePaymentResult>;
   verifyPayment(params: VerifyPaymentParams): Promise<VerifyPaymentResult>;
@@ -83,7 +83,7 @@ export interface ExpirePaymentResult {
 
 export abstract class BasePaymentProvider implements PaymentProvider {
   abstract readonly name: string;
-  abstract readonly providerType: 'KHQR' | 'BAKONG' | 'WALLET' | 'MANUAL' | 'ABA_PAYWAY';
+  abstract readonly providerType: 'KHQR' | 'BAKONG' | 'WALLET' | 'MANUAL' | 'ABA_PAYWAY' | 'KHQRCC';
 
   isAvailable(): boolean {
     return true;

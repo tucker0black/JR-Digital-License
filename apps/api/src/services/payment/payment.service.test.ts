@@ -144,6 +144,38 @@ class FakePayWayProvider extends BasePaymentProvider {
   }
 }
 
+class FakeKHQRCCProvider extends BasePaymentProvider {
+  readonly name = 'Fake KHQRCC Provider';
+  readonly providerType = 'KHQRCC' as const;
+
+  async createPayment(params: CreatePaymentParams): Promise<CreatePaymentResult> {
+    return {
+      success: true,
+      reference: params.reference,
+      providerPaymentId: 'khqrcc-txn-789',
+      expiresAt: params.expiresAt,
+      paymentUrl: `https://khqr.cc/api/payment/request/test_profile?transaction_id=${params.reference}&amount=${params.amount}`,
+      metadata: {
+        transactionId: 'khqrcc-txn-789',
+        mode: 'managed_checkout',
+        amount: parseFloat(params.amount)
+      }
+    };
+  }
+
+  async verifyPayment(_params: VerifyPaymentParams): Promise<VerifyPaymentResult> {
+    return { success: false, status: 'PENDING', error: 'webhook-driven' };
+  }
+
+  async getPaymentStatus(_params: GetPaymentStatusParams): Promise<GetPaymentStatusResult> {
+    return { success: true, status: 'PENDING' };
+  }
+
+  async expirePayment(_params: ExpirePaymentParams): Promise<ExpirePaymentResult> {
+    return { success: true };
+  }
+}
+
 function makeMockPrisma() {
   const prisma = {
     payment: {
@@ -216,6 +248,7 @@ describe('PaymentService', () => {
   let factory: DefaultPaymentProviderFactory;
   let provider: FakeQrProvider;
   let payWayProvider: FakePayWayProvider;
+  let khqrccProvider: FakeKHQRCCProvider;
   let walletService: { creditDeposit: ReturnType<typeof vi.fn> };
   let mock: ReturnType<typeof makeMockPrisma>;
   let service: PaymentService;
@@ -230,8 +263,10 @@ describe('PaymentService', () => {
     factory = new DefaultPaymentProviderFactory();
     provider = new FakeQrProvider();
     payWayProvider = new FakePayWayProvider();
+    khqrccProvider = new FakeKHQRCCProvider();
     factory.registerProvider('KHQR', provider);
     factory.registerProvider('ABA_PAYWAY', payWayProvider);
+    factory.registerProvider('KHQRCC', khqrccProvider);
     walletService = { creditDeposit: vi.fn().mockResolvedValue(undefined) };
     service = new PaymentService(mock.prisma, factory, walletService as unknown as CustomerWalletService);
   });
@@ -250,8 +285,7 @@ describe('PaymentService', () => {
       const result = await service.createDepositPayment('user-1', '5.00', 'USD', 'idem-dep-1');
 
       expect(result.success).toBe(true);
-      expect(result.payment?.qrCodeData).toBe('00020101021230450012ABA0015KHQR02030405060708');
-      expect(result.payment?.qrCodeImage).toMatch(/^data:image\/png;base64,/);
+      expect(result.payment?.paymentUrl).toContain('khqr.cc/api/payment/request');
       expect(result.payment?.reference).toBe('dep-1');
       expect(result.payment?.expiresAt).toBeInstanceOf(Date);
       expect(mock.prisma.payment.create).toHaveBeenCalledWith(
@@ -266,6 +300,7 @@ describe('PaymentService', () => {
       mock.prisma.payment.findUnique.mockResolvedValue(null);
       const activeRow = {
         ...PAYMENT_ROW,
+        provider: 'KHQRCC',
         orderId: null,
         reference: 'dep-active',
         idempotencyKey: 'idem-dep-2',
@@ -287,6 +322,7 @@ describe('PaymentService', () => {
       mock.prisma.payment.findUnique.mockResolvedValue(null);
       const activeRow = {
         ...PAYMENT_ROW,
+        provider: 'KHQRCC',
         orderId: null,
         reference: 'dep-active',
         idempotencyKey: 'idem-dep-2',
@@ -340,7 +376,7 @@ describe('PaymentService', () => {
         reference: `dep-${expected}`,
         idempotencyKey: `idem-${expected}`
       });
-      const createSpy = vi.spyOn(payWayProvider, 'createPayment');
+      const createSpy = vi.spyOn(khqrccProvider, 'createPayment');
 
       const result = await service.createDepositPayment('user-1', input, 'USD', `idem-${expected}`);
 
@@ -934,7 +970,7 @@ describe('PaymentService', () => {
       expect(result.payment?.paymentUrl).toBe('https://checkout-sandbox.payway.com.kh/qr/pw-123');
     });
 
-    it('createDepositPayment returns PayWay QR fields (qrCodeData, qrCodeImage, abapayDeeplink, checkoutQrUrl)', async () => {
+    it('createDepositPayment now uses KHQRCC provider (deposits switched from KHQR to KHQRCC)', async () => {
       mock.prisma.payment.findUnique.mockResolvedValue(null);
       mock.prisma.payment.findFirst.mockResolvedValue(null);
       mock.prisma.payment.create.mockResolvedValue({ ...PAYMENT_ROW, orderId: null, reference: 'dep-pw-1', idempotencyKey: 'idem-dep-pw-1' });
@@ -942,13 +978,10 @@ describe('PaymentService', () => {
       const result = await service.createDepositPayment('user-1', '5.00', 'USD', 'idem-dep-pw-1');
 
       expect(result.success).toBe(true);
-      expect(result.payment?.qrCodeData).toBe('00020101021230450012ABA0015KHQR02030405060708');
-      expect(result.payment?.qrCodeImage).toBe('data:image/png;base64,UkVNT1ZFRF9QYXlXZXlfUVE=');
-      expect(result.payment?.abapayDeeplink).toBe('abamobilebank://ababank.com?type=payway&qrcode=pw-123');
-      expect(result.payment?.checkoutQrUrl).toBe('https://checkout-sandbox.payway.com.kh/qr/pw-123');
+      expect(result.payment?.paymentUrl).toContain('khqr.cc/api/payment/request');
       expect(mock.prisma.payment.create).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: expect.objectContaining({ provider: 'ABA_PAYWAY', status: 'PENDING' })
+          data: expect.objectContaining({ provider: 'KHQRCC', status: 'PENDING' })
         })
       );
     });

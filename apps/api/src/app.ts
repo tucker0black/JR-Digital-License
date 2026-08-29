@@ -210,9 +210,10 @@ export function buildApp() {
   const customerTicketService = new CustomerTicketService(prisma, supportAvailabilityService);
   const securityService = new SecurityService(prisma);
   const notificationService = new TelegramNotificationService(undefined, undefined, prisma);
+  const paymentProviderFactory = new DefaultPaymentProviderFactory();
   const paymentService = new PaymentService(
     prisma,
-    new DefaultPaymentProviderFactory(),
+    paymentProviderFactory,
     walletService,
     notificationService
   );
@@ -1656,7 +1657,7 @@ export function buildApp() {
     // Customer-created payment sessions must use a real server-verified rail.
     // Wallet payments have their own endpoint; MANUAL is retained only for
     // historical records and is not an accepted customer payment method.
-    const validProviders = ['KHQR', 'BAKONG', 'ABA_PAYWAY'];
+    const validProviders = ['KHQR', 'BAKONG', 'ABA_PAYWAY', 'KHQRCC'];
     if (!validProviders.includes(body.provider)) {
       return reply.status(400).send({ error: 'Invalid payment provider' });
     }
@@ -1898,70 +1899,325 @@ export function buildApp() {
   app.post('/api/payments/webhook/payway', {
     config: { rateLimit: { max: 60, timeWindow: '1 minute' } }
   }, async (request, reply) => {
-    const body = (request.body ?? {}) as Record<string, unknown>;
-
-    request.log.info({ event: 'payway_webhook_received', transactionId: body.transaction_id }, 'PayWay webhook received');
-
-    const { PayWayPaymentProvider } = await import('./services/payment/payway-provider.js');
-    const merchantId = process.env.ABA_PAYWAY_MERCHANT_ID ?? '';
-
-    const payload = PayWayPaymentProvider.verifyWebhookPayload(body as Parameters<typeof PayWayPaymentProvider.verifyWebhookPayload>[0], merchantId);
-    if (!payload) {
-      request.log.warn({ event: 'payway_webhook_invalid' }, 'PayWay webhook validation failed');
-      return reply.status(200).send({ status: 'ignored' });
-    }
-
-    const paymentStatus = payload.payment_status_code;
-    if (paymentStatus !== 0) {
-      request.log.info({ transactionId: payload.transaction_id, status: paymentStatus }, 'PayWay webhook non-success status');
-      return reply.status(200).send({ status: 'acknowledged' });
-    }
-
-    const tranId = payload.transaction_id;
-    if (!tranId) {
-      return reply.status(200).send({ status: 'ignored' });
-    }
-
-    const payment = await prisma.payment.findFirst({
-      where: {
-        provider: 'ABA_PAYWAY',
-        OR: [
-          { providerPaymentId: tranId },
-          { reference: payload.merchant_ref ?? tranId }
-        ]
-      },
-      include: { order: true }
-    });
-
-    if (!payment) {
-      request.log.warn({ transactionId: tranId }, 'PayWay webhook: no matching payment');
-      return reply.status(200).send({ status: 'ignored' });
-    }
-
-    if (payment.status === 'SUCCEEDED') {
-      return reply.status(200).send({ status: 'already_processed' });
-    }
-
-    if (payment.status === 'EXPIRED' || payment.status === 'CANCELLED' || payment.status === 'FAILED') {
-      return reply.status(200).send({ status: 'terminal' });
-    }
-
     try {
-      const result = await paymentService.verifyPayment(payment.id);
-      if (result.status === 'SUCCEEDED' && payment.orderId) {
-        const order = await prisma.order.findUnique({
-          where: { id: payment.orderId },
-          select: { status: true }
-        });
-        if (order && order.status !== 'COMPLETED') {
-          void fulfillOrderAndNotify(payment.orderId);
+      const payload = request.body as Record<string, unknown>;
+
+      // --- Step 1: Verify HMAC-SHA512 signature ---
+      const signature = request.headers['x-payway-hmac-sha512'] as string | undefined;
+      const webhookApiKey = process.env.ABA_PAYWAY_API_KEY?.trim() || '';
+
+      if (!webhookApiKey) {
+        request.log.error('PayWay webhook: ABA_PAYWAY_API_KEY not configured — cannot verify signature');
+        return reply.status(500).send({ error: 'Webhook verification not configured' });
+      }
+
+      if (!signature) {
+        request.log.warn('PayWay webhook: missing X-PAYWAY-HMAC-SHA512 header');
+        return reply.status(401).send({ error: 'Missing signature' });
+      }
+
+      const rawBody = JSON.stringify(payload);
+      const expectedSignature = crypto.createHmac('sha512', webhookApiKey).update(rawBody).digest('base64');
+
+      const sigBuffer = Buffer.from(signature, 'base64');
+      const expectedBuffer = Buffer.from(expectedSignature, 'base64');
+
+      if (sigBuffer.length !== expectedBuffer.length || !crypto.timingSafeEqual(sigBuffer, expectedBuffer)) {
+        request.log.warn('PayWay webhook: invalid HMAC signature');
+        return reply.status(401).send({ error: 'Invalid signature' });
+      }
+
+      // --- Step 2: Extract and validate payload fields ---
+      const merchantId = (payload.merchant_id as string) || '';
+      const tranId = (payload.tran_id as string) || (payload.transaction_id as string) || '';
+      const bankRef = (payload.bank_ref as string) || '';
+      const apv = (payload.apv as string) || '';
+      const returnParams = (payload.return_params as string) || '';
+
+      if (!tranId) {
+        request.log.warn('PayWay webhook: missing tran_id');
+        return reply.status(400).send({ error: 'Missing transaction ID' });
+      }
+
+      // Validate merchant_id matches our configured merchant
+      const configuredMerchantId = process.env.ABA_PAYWAY_MERCHANT_ID?.trim() || '';
+      if (configuredMerchantId && merchantId !== configuredMerchantId) {
+        request.log.warn({ merchantId, configuredMerchantId }, 'PayWay webhook: merchant_id mismatch');
+        return reply.status(400).send({ error: 'Merchant ID mismatch' });
+      }
+
+      // --- Step 3: Find the payment record ---
+      const payment = await prisma.payment.findFirst({
+        where: {
+          OR: [
+            { reference: returnParams },
+            { providerPaymentId: tranId }
+          ]
+        },
+        include: { order: true }
+      });
+
+      if (!payment) {
+        request.log.warn({ tranId }, 'PayWay webhook: payment not found');
+        return reply.status(200).send({ status: 'ok' });
+      }
+
+      if (payment.status === 'SUCCEEDED') {
+        request.log.info({ paymentId: payment.id }, 'PayWay webhook: already succeeded (idempotent)');
+        return reply.status(200).send({ status: 'ok' });
+      }
+
+      if (payment.status === 'EXPIRED' || payment.status === 'CANCELLED' || payment.status === 'FAILED') {
+        request.log.warn({ paymentId: payment.id, status: payment.status }, 'PayWay webhook: terminal state');
+        return reply.status(200).send({ status: 'ok' });
+      }
+
+      // --- Step 4: Independent verification via Check Transaction API ---
+      const payWayProvider = paymentProviderFactory.getProvider('ABA_PAYWAY');
+      const verification = await payWayProvider.verifyPayment({
+        providerPaymentId: payment.providerPaymentId ?? tranId,
+        reference: payment.reference,
+        expectedAmount: payment.amount.toString(),
+        expectedCurrency: payment.currency
+      });
+
+      if (!verification.success || verification.status !== 'SUCCEEDED') {
+        request.log.info({
+          paymentId: payment.id,
+          verificationStatus: verification.status,
+          verificationError: verification.error
+        }, 'PayWay webhook: Check Transaction API did not confirm success');
+        return reply.status(200).send({ status: 'ok' });
+      }
+
+      // Verify amount from the authoritative Check Transaction response
+      if (verification.amount) {
+        const verified = parseFloat(verification.amount);
+        const expected = parseFloat(payment.amount.toString());
+        if (Math.abs(verified - expected) > 0.01) {
+          request.log.warn({ paymentId: payment.id, expected, verified }, 'PayWay webhook: amount mismatch after verification');
+          return reply.status(200).send({ status: 'ok' });
         }
       }
-    } catch (error) {
-      request.log.error({ paymentId: payment.id, error }, 'PayWay webhook verification failed');
-    }
 
-    return reply.status(200).send({ status: 'processed' });
+      // Verify currency from the authoritative Check Transaction response
+      if (verification.currency) {
+        if (verification.currency.toUpperCase() !== payment.currency.toUpperCase()) {
+          request.log.warn({ paymentId: payment.id, expected: payment.currency, verified: verification.currency }, 'PayWay webhook: currency mismatch after verification');
+          return reply.status(200).send({ status: 'ok' });
+        }
+      }
+
+      // --- Step 5: Credit wallet exactly once ---
+      const paidAt = verification.paidAt ?? new Date();
+      await prisma.$transaction(async (tx) => {
+        const claim = await tx.payment.updateMany({
+          where: {
+            id: payment.id,
+            status: { in: ['PENDING', 'PROCESSING'] }
+          },
+          data: {
+            status: 'SUCCEEDED',
+            paidAt,
+            providerPaymentId: verification.providerPaymentId ?? tranId,
+            providerTransactionHash: verification.providerTransactionHash ?? (apv || tranId)
+          }
+        });
+
+        if (claim.count === 0) return;
+
+        if (!payment.orderId && walletService) {
+          await walletService.creditDeposit({
+            id: payment.id,
+            amount: payment.amount,
+            currency: payment.currency,
+            userId: payment.userId,
+            reference: payment.reference
+          }, tx);
+        }
+
+        if (payment.orderId) {
+          await tx.order.update({
+            where: { id: payment.orderId },
+            data: { status: 'PAID', paidAt }
+          });
+
+          const reservedStock = await tx.productStock.findMany({
+            where: { orderId: payment.orderId, status: 'RESERVED' }
+          });
+          if (reservedStock.length > 0) {
+            await tx.productStock.updateMany({
+              where: { orderId: payment.orderId, status: 'RESERVED' },
+              data: { status: 'SOLD', soldAt: new Date() }
+            });
+          }
+        }
+
+        await tx.paymentEvent.create({
+          data: {
+            paymentId: payment.id,
+            eventType: 'payment_succeeded',
+            payload: {
+              source: 'payway_webhook',
+              tranId,
+              bankRef,
+              apv,
+              verifiedAmount: verification.amount,
+              verifiedCurrency: verification.currency
+            }
+          }
+        });
+      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+
+      request.log.info({ paymentId: payment.id, tranId }, 'PayWay webhook: payment credited');
+      return reply.status(200).send({ status: 'ok' });
+    } catch (error) {
+      request.log.error({ err: error }, 'PayWay webhook processing failed');
+      return reply.status(200).send({ status: 'ok' });
+    }
+  });
+
+  // ==================== KHQR.CC WEBHOOK ====================
+  app.post('/api/payments/webhook/khqrcc', {
+    config: { rateLimit: { max: 60, timeWindow: '1 minute' } }
+  }, async (request, reply) => {
+    try {
+      const payload = request.body as Record<string, unknown>;
+
+      // --- Step 1: Verify SHA-256 webhook hash ---
+      const khqrccSecret = process.env.KHQRCC_SECRET?.trim() || '';
+      if (!khqrccSecret) {
+        request.log.error('KHQR.cc webhook: KHQRCC_SECRET not configured');
+        return reply.status(500).send({ error: 'Webhook verification not configured' });
+      }
+
+      const { KHQRCCPaymentProvider } = await import('./services/payment/khqrcc-provider.js');
+      const hashValid = KHQRCCPaymentProvider.verifyWebhookHash(
+        payload as Parameters<typeof KHQRCCPaymentProvider.verifyWebhookHash>[0],
+        khqrccSecret
+      );
+
+      if (!hashValid) {
+        request.log.warn('KHQR.cc webhook: invalid SHA-256 hash');
+        return reply.status(401).send({ error: 'Invalid hash' });
+      }
+
+      // --- Step 2: Extract and validate payload fields ---
+      const transactionId = (payload.transaction_id as string) || '';
+      const webhookAmount = payload.amount as number | undefined;
+      const status = (payload.status as string) || '';
+
+      if (!transactionId) {
+        request.log.warn('KHQR.cc webhook: missing transaction_id');
+        return reply.status(400).send({ error: 'Missing transaction ID' });
+      }
+
+      if (status !== 'SUCCESS') {
+        request.log.info({ transactionId, status }, 'KHQR.cc webhook: non-SUCCESS status');
+        return reply.status(200).send({ status: 'ok' });
+      }
+
+      // --- Step 3: Find the payment record ---
+      const payment = await prisma.payment.findFirst({
+        where: {
+          OR: [
+            { reference: transactionId },
+            { providerPaymentId: transactionId }
+          ]
+        },
+        include: { order: true }
+      });
+
+      if (!payment) {
+        request.log.warn({ transactionId }, 'KHQR.cc webhook: payment not found');
+        return reply.status(200).send({ status: 'ok' });
+      }
+
+      if (payment.status === 'SUCCEEDED') {
+        request.log.info({ paymentId: payment.id }, 'KHQR.cc webhook: already succeeded (idempotent)');
+        return reply.status(200).send({ status: 'ok' });
+      }
+
+      if (payment.status === 'EXPIRED' || payment.status === 'CANCELLED' || payment.status === 'FAILED') {
+        request.log.warn({ paymentId: payment.id, status: payment.status }, 'KHQR.cc webhook: terminal state');
+        return reply.status(200).send({ status: 'ok' });
+      }
+
+      // --- Step 4: Verify amount ---
+      if (webhookAmount !== undefined) {
+        const expected = parseFloat(payment.amount.toString());
+        const received = webhookAmount;
+        if (Math.abs(received - expected) > 0.01) {
+          request.log.warn({ paymentId: payment.id, expected, received }, 'KHQR.cc webhook: amount mismatch');
+          return reply.status(200).send({ status: 'ok' });
+        }
+      }
+
+      // --- Step 5: Credit wallet exactly once ---
+      const paidAt = new Date();
+      await prisma.$transaction(async (tx) => {
+        const claim = await tx.payment.updateMany({
+          where: {
+            id: payment.id,
+            status: { in: ['PENDING', 'PROCESSING'] }
+          },
+          data: {
+            status: 'SUCCEEDED',
+            paidAt,
+            providerPaymentId: transactionId,
+            providerTransactionHash: transactionId
+          }
+        });
+
+        if (claim.count === 0) return;
+
+        if (!payment.orderId && walletService) {
+          await walletService.creditDeposit({
+            id: payment.id,
+            amount: payment.amount,
+            currency: payment.currency,
+            userId: payment.userId,
+            reference: payment.reference
+          }, tx);
+        }
+
+        if (payment.orderId) {
+          await tx.order.update({
+            where: { id: payment.orderId },
+            data: { status: 'PAID', paidAt }
+          });
+
+          const reservedStock = await tx.productStock.findMany({
+            where: { orderId: payment.orderId, status: 'RESERVED' }
+          });
+          if (reservedStock.length > 0) {
+            await tx.productStock.updateMany({
+              where: { orderId: payment.orderId, status: 'RESERVED' },
+              data: { status: 'SOLD', soldAt: new Date() }
+            });
+          }
+        }
+
+        await tx.paymentEvent.create({
+          data: {
+            paymentId: payment.id,
+            eventType: 'payment_succeeded',
+            payload: {
+              source: 'khqrcc_webhook',
+              transactionId,
+              webhookAmount,
+              webhookStatus: status
+            }
+          }
+        });
+      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+
+      request.log.info({ paymentId: payment.id, transactionId }, 'KHQR.cc webhook: payment credited');
+      return reply.status(200).send({ status: 'ok' });
+    } catch (error) {
+      request.log.error({ err: error }, 'KHQR.cc webhook processing failed');
+      return reply.status(200).send({ status: 'ok' });
+    }
   });
 
   // ==================== SUPPORT TICKETS ====================
