@@ -384,7 +384,7 @@ function WalletContent() {
         {/* Deposit form */}
         {depositOpen && !depositPayment && !conflictPayment && (
           <section className="animate-fade-up mt-4 rounded-2xl card-cosmic p-5">
-            <h2 className="font-semibold text-ink">{t('wallet.depositViaKhqrcc')}</h2>
+            <h2 className="font-semibold text-ink">{t('wallet.depositViaPayWay')}</h2>
             <p className="mt-1 text-sm text-soft">
               {t('wallet.chooseAmount')}
             </p>

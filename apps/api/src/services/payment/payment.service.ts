@@ -307,10 +307,13 @@ export class PaymentService {
     }
 
     const provider = 'KHQRCC' as PrismaPaymentProvider;
+    console.info(`[createDepositPayment] selected provider=${provider} amount=${amount.toFixed(2)} ${normalizedCurrency}`);
     const providerInstance = this.factory.getProvider(provider);
     if (!providerInstance.isAvailable()) {
+      console.warn(`[createDepositPayment] provider ${provider} not available: ${providerInstance.getAvailabilityError()}`);
       return { success: false, error: providerInstance.getAvailabilityError() };
     }
+    console.info(`[createDepositPayment] provider ${provider} is available, proceeding`);
 
     await this.expireOverdueDeposits(userId);
 
@@ -323,7 +326,9 @@ export class PaymentService {
     });
 
     if (existingDeposit) {
+      console.info(`[createDepositPayment] found existing deposit id=${existingDeposit.id} provider=${existingDeposit.provider} status=${existingDeposit.status}`);
       if (existingDeposit.provider !== provider) {
+        console.info(`[createDepositPayment] expiring stale deposit ${existingDeposit.id} (provider ${existingDeposit.provider} != ${provider})`);
         await this.expirePayment(existingDeposit.id);
       } else if (!new Prisma.Decimal(existingDeposit.amount).equals(amount)) {
         return {
@@ -358,8 +363,10 @@ export class PaymentService {
     const providerResult = await providerInstance.createPayment(createParams);
 
     if (!providerResult.success) {
+      console.warn(`[createDepositPayment] provider ${provider} createPayment failed: ${providerResult.error}`);
       return { success: false, error: providerResult.error || 'Failed to create deposit with provider' };
     }
+    console.info(`[createDepositPayment] provider ${provider} createPayment succeeded, reference=${createParams.reference} paymentUrl=${providerResult.paymentUrl ? 'present' : 'absent'} qrCodeData=${providerResult.qrCodeData ? 'present' : 'absent'}`);
 
     const payment = await this.prisma.payment.create({
       data: {
