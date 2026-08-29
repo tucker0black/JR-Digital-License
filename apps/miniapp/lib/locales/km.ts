@@ -216,6 +216,8 @@ const km: TranslationKeys = {
     generating: 'កំពុងបង្កើតការទូទាត់...',
     generatingSubtitle: 'កំពុងបង្កើតវេនទូទាត់សុវត្ថិភាព',
     qrError: 'មិនអាចបង្កើត QR ទូទាត់បាន',
+    cancelError: 'មិនអាចបោះបង់ការទូទាត់បាន',
+    cancelling: 'កំពុងបោះបង់...',
     retrying: 'កំពុងព្យាយាម...',
     retry: 'ព្យាយាមទូទាត់ម្ដងទៀត',
     failedTitle: 'ការទូទាត់បរាជ័យ',
@@ -392,6 +394,8 @@ const km: TranslationKeys = {
     balanceAfterLabel: 'សមតុល្យ: {amount}',
     payNow: 'បង់ប្រាក់ឥឡូវនេះ',
     checkoutNote: 'អ្នកនឹងត្រូវបានបញ្ជូនទៅ KHQR.cc ដើម្បីបញ្ចប់ការទូទាត់',
+    checkoutFailedNote: 'ចុចខាងលើដើម្បីបើក KHQR.cc នៅផ្ទាំងថ្មី',
+    openInNewTab: 'បើកនៅផ្ទាំងថ្មី',
   },
   // Top Up
   topUp: {

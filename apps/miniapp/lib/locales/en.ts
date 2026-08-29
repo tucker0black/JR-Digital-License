@@ -214,6 +214,8 @@ const en = {
     generating: 'Generating payment...',
     generatingSubtitle: 'Creating a secure payment session',
     qrError: 'Unable to generate payment QR',
+    cancelError: 'Unable to cancel payment',
+    cancelling: 'Cancelling...',
     retrying: 'Retrying...',
     retry: 'Retry Payment',
     failedTitle: 'Payment failed',
@@ -390,6 +392,8 @@ const en = {
     balanceAfterLabel: 'Bal: {amount}',
     payNow: 'Pay Now',
     checkoutNote: 'You will be redirected to KHQR.cc to complete payment',
+    checkoutFailedNote: 'Tap above to open KHQR.cc payment in a new tab',
+    openInNewTab: 'Open in new tab',
   },
   // Top Up
   topUp: {

@@ -241,7 +241,7 @@ export class KHQRCCPaymentProvider extends BasePaymentProvider {
           success: false,
           status: 'PENDING',
           providerPaymentId: transactionId,
-          error: parsed.responseMessage || 'KHQR.cc verification failed'
+          error: `KHQR.cc payment waiting — ${parsed.responseMessage || 'not confirmed'}`
         };
       }
 
@@ -270,7 +270,7 @@ export class KHQRCCPaymentProvider extends BasePaymentProvider {
         success: false,
         status: 'PENDING',
         providerPaymentId: transactionId,
-        error: `Payment status: ${txStatus || 'unknown'}`
+        error: `Payment waiting — status: ${txStatus || 'unknown'}`
       };
     } catch (error) {
       logProviderError('verification', error, this.config?.secret);

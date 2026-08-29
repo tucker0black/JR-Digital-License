@@ -333,8 +333,8 @@ export function PaymentPanel({
           )}
           <p className="mt-2 text-center text-xs text-soft">
             {iframeStatus === 'failed'
-              ? (t('wallet.checkoutNote') || 'Tap above to open KHQR.cc payment')
-              : (t('wallet.checkoutNote') || 'Complete payment in the KHQR.cc checkout below')}
+              ? (t('wallet.checkoutFailedNote') || 'Tap above to open KHQR.cc payment in a new tab')
+              : t('payment.scanInstruction')}
           </p>
           {iframeStatus === 'loaded' && (
             <a
@@ -343,7 +343,7 @@ export function PaymentPanel({
               rel="noopener noreferrer"
               className="mt-2 block text-center text-xs text-primary hover:underline"
             >
-              {t('wallet.payNow') || 'Open in new tab'}
+              {t('wallet.openInNewTab') || 'Open in new tab'}
             </a>
           )}
         </div>
@@ -387,9 +387,9 @@ export function PaymentPanel({
           <button
             type="button"
             onClick={() => {
-              if (!payment) return;
+              if (!payment || loading) return;
               setLoading(true);
-                expirePayment(payment.id)
+              expirePayment(payment.id)
                 .then((result) => {
                   if (result.paid && result.status === 'SUCCEEDED') {
                     setStatus('SUCCEEDED');
@@ -397,19 +397,24 @@ export function PaymentPanel({
                     setError(null);
                     return;
                   }
+                  paymentIdRef.current = null;
                   setStatus(result.status || 'EXPIRED');
-                  if (result.status === 'SUCCEEDED') {
-                    paymentIdRef.current = null;
-                  }
+                  setVerificationError(null);
                   setError(null);
+                  setRemaining('');
+                  setIframeStatus('loading');
+                  if (iframeTimerRef.current) {
+                    clearTimeout(iframeTimerRef.current);
+                    iframeTimerRef.current = null;
+                  }
                 })
-                .catch(() => setError(t('payment.qrError')))
+                .catch(() => setError(t('payment.cancelError') || 'Unable to cancel payment'))
                 .finally(() => setLoading(false));
             }}
             disabled={loading}
             className="flex-1 rounded-xl border border-danger/30 bg-danger/10 px-4 py-2.5 font-medium text-danger transition-default hover:bg-danger/20 disabled:opacity-50"
           >
-            {t('wallet.cancel')}
+            {loading ? t('payment.cancelling') || 'Cancelling...' : t('wallet.cancel')}
           </button>
         </div>
       )}
