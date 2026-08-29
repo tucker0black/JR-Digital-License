@@ -10,7 +10,7 @@ export interface PaymentPanelProps {
   orderNumber?: number;
   orderTotal: string;
   orderCurrency: string;
-  provider?: 'ABA_PAYWAY' | 'KHQR';
+  provider?: 'KHQRCC' | 'KHQR';
   autoCreate?: boolean;
 }
 
@@ -52,7 +52,7 @@ export function PaymentPanel({
   orderNumber,
   orderTotal,
   orderCurrency,
-  provider = 'ABA_PAYWAY',
+  provider = 'KHQRCC',
   autoCreate = false
 }: PaymentPanelProps) {
   const { t } = useTranslation();

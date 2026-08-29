@@ -32,7 +32,7 @@ export function PaymentActions({
   orderCurrency
 }: PaymentActionsProps) {
   const { t } = useTranslation();
-  const [provider, setProvider] = useState<'ABA_PAYWAY' | null>(null);
+  const [provider, setProvider] = useState<'KHQRCC' | null>(null);
   const [walletBalance, setWalletBalance] = useState<number | null>(null);
   const [walletLoading, setWalletLoading] = useState(true);
   const [walletPaying, setWalletPaying] = useState(false);
@@ -118,7 +118,7 @@ export function PaymentActions({
       const message = err instanceof Error ? err.message : t('payment.walletPayError');
       setWalletError(message);
       if (message.toLowerCase().includes('active payment session')) {
-        setProvider('ABA_PAYWAY');
+        setProvider('KHQRCC');
       }
     } finally {
       setWalletPaying(false);
@@ -165,13 +165,13 @@ export function PaymentActions({
           type="button"
           onClick={() => {
             setWalletError(null);
-            setProvider('ABA_PAYWAY');
+            setProvider('KHQRCC');
           }}
           className="flex flex-col items-center gap-1 rounded-xl border border-line/50 bg-card px-4 py-3.5 font-medium text-ink transition-luxury hover:border-primary/30 hover:bg-primary/5 hover:shadow-glow-sm"
         >
           <span className="text-lg">&#x1F3E6;</span>
-          <span>{t('payment.payWithAbaPayway')}</span>
-          <span className="text-xs text-soft">{t('payment.payViaAbaCheckout')}</span>
+          <span>{t('payment.payWithKhqrcc')}</span>
+          <span className="text-xs text-soft">{t('payment.payViaKhqrccCheckout')}</span>
         </button>
       </div>
 
