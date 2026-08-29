@@ -65,12 +65,15 @@ export function PaymentPanel({
   const paymentIdRef = useRef<string | null>(null);
   const autoCreateStarted = useRef(false);
   const [remaining, setRemaining] = useState('');
+  const [iframeStatus, setIframeStatus] = useState<'loading' | 'loaded' | 'failed'>('loading');
+  const iframeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const handleCreatePayment = useCallback(
     async (withSpinner: boolean) => {
       setError(null);
       if (withSpinner) setLoading(true);
       setCreating(true);
+      setIframeStatus('loading');
       try {
         const result = await createPayment({ orderId, provider });
         setPayment(result.payment);
@@ -158,6 +161,26 @@ export function PaymentPanel({
     const timer = setInterval(update, 1000);
     return () => clearInterval(timer);
   }, [payment?.expiresAt]);
+
+  useEffect(() => {
+    if (iframeTimerRef.current) {
+      clearTimeout(iframeTimerRef.current);
+      iframeTimerRef.current = null;
+    }
+    if (payment?.paymentUrl && !TERMINAL_STATUSES.includes(status)) {
+      setIframeStatus('loading');
+      iframeTimerRef.current = setTimeout(() => {
+        setIframeStatus((prev) => (prev === 'loading' ? 'failed' : prev));
+        iframeTimerRef.current = null;
+      }, 5000);
+    }
+    return () => {
+      if (iframeTimerRef.current) {
+        clearTimeout(iframeTimerRef.current);
+        iframeTimerRef.current = null;
+      }
+    };
+  }, [payment?.id, payment?.paymentUrl, status]);
 
   if (!payment) {
     if (creating || loading) {
@@ -266,7 +289,65 @@ export function PaymentPanel({
         )}
       </div>
 
-      {payment.qrCodeData && (
+      {payment.paymentUrl ? (
+        <div>
+          {iframeStatus === 'failed' ? (
+            <a
+              href={payment.paymentUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="block w-full rounded-xl bg-gradient-to-r from-primary to-violet px-5 py-3 text-center font-semibold text-white shadow-md shadow-primary/20 transition-default hover:shadow-lg active:scale-95"
+            >
+              {t('wallet.payNow') || 'Open Payment'}
+            </a>
+          ) : (
+            <div className="relative w-full overflow-hidden rounded-xl border border-line bg-card" style={{ minHeight: 420 }}>
+              {iframeStatus === 'loading' && (
+                <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-card/80 backdrop-blur-sm">
+                  <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                  <p className="text-sm text-soft">Loading KHQR checkout...</p>
+                </div>
+              )}
+              <iframe
+                src={payment.paymentUrl}
+                title="KHQR Checkout"
+                className="h-[500px] w-full border-0"
+                sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
+                onLoad={() => {
+                  if (iframeTimerRef.current) {
+                    clearTimeout(iframeTimerRef.current);
+                    iframeTimerRef.current = null;
+                  }
+                  setIframeStatus('loaded');
+                }}
+                onError={() => {
+                  if (iframeTimerRef.current) {
+                    clearTimeout(iframeTimerRef.current);
+                    iframeTimerRef.current = null;
+                  }
+                  setIframeStatus('failed');
+                }}
+                referrerPolicy="no-referrer"
+              />
+            </div>
+          )}
+          <p className="mt-2 text-center text-xs text-soft">
+            {iframeStatus === 'failed'
+              ? (t('wallet.checkoutNote') || 'Tap above to open KHQR.cc payment')
+              : (t('wallet.checkoutNote') || 'Complete payment in the KHQR.cc checkout below')}
+          </p>
+          {iframeStatus === 'loaded' && (
+            <a
+              href={payment.paymentUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-2 block text-center text-xs text-primary hover:underline"
+            >
+              {t('wallet.payNow') || 'Open in new tab'}
+            </a>
+          )}
+        </div>
+      ) : payment.qrCodeData ? (
         <>
           <div className="flex flex-col items-center gap-2">
             <QrDisplay
@@ -276,7 +357,7 @@ export function PaymentPanel({
             <p className="text-center text-xs text-soft">{t('payment.scanToPayAnyApp')}</p>
           </div>
         </>
-      )}
+      ) : null}
 
       {payment.abapayDeeplink && (
         <p className="text-center text-xs text-soft">

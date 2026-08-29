@@ -85,6 +85,8 @@ function WalletContent() {
     expiresAt?: string | null;
   } | null>(null);
   const [pendingRequestedAmount, setPendingRequestedAmount] = useState<string | null>(null);
+  const [iframeStatus, setIframeStatus] = useState<'loading' | 'loaded' | 'failed'>('loading');
+  const iframeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const loadWallet = useCallback(async () => {
     try {
@@ -182,6 +184,26 @@ function WalletContent() {
     return () => clearInterval(timer);
   }, [depositPayment?.expiresAt]);
 
+  useEffect(() => {
+    if (iframeTimerRef.current) {
+      clearTimeout(iframeTimerRef.current);
+      iframeTimerRef.current = null;
+    }
+    if (depositPayment?.paymentUrl && !TERMINAL_STATUSES.includes(depositStatus)) {
+      setIframeStatus('loading');
+      iframeTimerRef.current = setTimeout(() => {
+        setIframeStatus((prev) => (prev === 'loading' ? 'failed' : prev));
+        iframeTimerRef.current = null;
+      }, 5000);
+    }
+    return () => {
+      if (iframeTimerRef.current) {
+        clearTimeout(iframeTimerRef.current);
+        iframeTimerRef.current = null;
+      }
+    };
+  }, [depositPayment?.id, depositPayment?.paymentUrl, depositStatus]);
+
   const handleCreateDeposit = useCallback(async () => {
     const normalizedAmount = customAmount.trim();
     if (!/^\d+(?:\.\d{1,2})?$/.test(normalizedAmount)) {
@@ -194,6 +216,7 @@ function WalletContent() {
       return;
     }
     setDepositError(null);
+    setIframeStatus('loading');
     setDepositCreating(true);
     try {
       const result = await createDeposit({
@@ -237,6 +260,10 @@ function WalletContent() {
   }, [customAmount, currency, t]);
 
   const handleResetDeposit = useCallback(() => {
+    if (iframeTimerRef.current) {
+      clearTimeout(iframeTimerRef.current);
+      iframeTimerRef.current = null;
+    }
     setDepositStatus('PENDING');
     setDepositVerificationError(null);
     setDepositPayment(null);
@@ -244,9 +271,14 @@ function WalletContent() {
     setDepositError(null);
     setConflictPayment(null);
     setPendingRequestedAmount(null);
+    setIframeStatus('loading');
   }, []);
 
   const handleCancelDeposit = useCallback(async () => {
+    if (iframeTimerRef.current) {
+      clearTimeout(iframeTimerRef.current);
+      iframeTimerRef.current = null;
+    }
     const id = depositPaymentIdRef.current;
     if (!id) return;
     try {
@@ -517,17 +549,61 @@ function WalletContent() {
             </div>
             {depositPayment.paymentUrl ? (
               <div className="mt-5">
-                <a
-                  href={depositPayment.paymentUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="block w-full rounded-xl bg-gradient-to-r from-primary to-violet px-5 py-3 text-center font-semibold text-white shadow-md shadow-primary/20 transition-default hover:shadow-lg active:scale-95"
-                >
-                  {t('wallet.payNow') || 'Pay Now'}
-                </a>
+                {iframeStatus === 'failed' ? (
+                  <a
+                    href={depositPayment.paymentUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="block w-full rounded-xl bg-gradient-to-r from-primary to-violet px-5 py-3 text-center font-semibold text-white shadow-md shadow-primary/20 transition-default hover:shadow-lg active:scale-95"
+                  >
+                    {t('wallet.payNow') || 'Open Payment'}
+                  </a>
+                ) : (
+                  <div className="relative w-full overflow-hidden rounded-xl border border-line bg-card" style={{ minHeight: 420 }}>
+                    {iframeStatus === 'loading' && (
+                      <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-card/80 backdrop-blur-sm">
+                        <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                        <p className="text-sm text-soft">Loading KHQR checkout...</p>
+                      </div>
+                    )}
+                    <iframe
+                      src={depositPayment.paymentUrl}
+                      title="KHQR Checkout"
+                      className="h-[500px] w-full border-0"
+                      sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
+                      onLoad={() => {
+                        if (iframeTimerRef.current) {
+                          clearTimeout(iframeTimerRef.current);
+                          iframeTimerRef.current = null;
+                        }
+                        setIframeStatus('loaded');
+                      }}
+                      onError={() => {
+                        if (iframeTimerRef.current) {
+                          clearTimeout(iframeTimerRef.current);
+                          iframeTimerRef.current = null;
+                        }
+                        setIframeStatus('failed');
+                      }}
+                      referrerPolicy="no-referrer"
+                    />
+                  </div>
+                )}
                 <p className="mt-2 text-center text-xs text-soft">
-                  {t('wallet.checkoutNote') || 'You will be redirected to KHQR.cc to complete payment'}
+                  {iframeStatus === 'failed'
+                    ? (t('wallet.checkoutNote') || 'Tap above to open KHQR.cc payment')
+                    : (t('wallet.checkoutNote') || 'Complete payment in the KHQR.cc checkout below')}
                 </p>
+                {iframeStatus === 'loaded' && (
+                  <a
+                    href={depositPayment.paymentUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="mt-2 block text-center text-xs text-primary hover:underline"
+                  >
+                    {t('wallet.payNow') || 'Open in new tab'}
+                  </a>
+                )}
               </div>
             ) : depositPayment.qrCodeData ? (
               <>
