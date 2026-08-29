@@ -138,7 +138,7 @@ export class CustomerWalletService {
           balanceBefore,
           balanceAfter,
           reference: payment.reference,
-          reason: 'Deposit via ABA PayWay'
+          reason: 'Wallet deposit via payment gateway'
         }
       });
 

@@ -1035,6 +1035,190 @@ describe('PaymentService', () => {
     });
   });
 
+  describe('KHQRCC provider integration', () => {
+    it('creates a KHQRCC deposit payment with managed checkout URL', async () => {
+      mock.prisma.payment.findUnique.mockResolvedValue(null);
+      mock.prisma.payment.findFirst.mockResolvedValue(null);
+      mock.prisma.payment.create.mockResolvedValue({ ...PAYMENT_ROW, orderId: null, reference: 'dep-khqrcc-1', idempotencyKey: 'idem-dep-khqrcc-1' });
+
+      const result = await service.createDepositPayment('user-1', '10.00', 'USD', 'idem-dep-khqrcc-1');
+
+      expect(result.success).toBe(true);
+      expect(result.payment?.paymentUrl).toContain('khqr.cc/api/payment/request');
+      expect(result.payment?.paymentUrl).toContain('transaction_id=');
+      expect(result.payment?.paymentUrl).toContain('amount=10.00');
+      expect(result.payment?.qrCodeData).toBeUndefined();
+      const created = mock.prisma.payment.create.mock.calls[0]?.[0].data;
+      expect(created?.provider).toBe('KHQRCC');
+      expect(created?.status).toBe('PENDING');
+    });
+
+    it('creates a KHQRCC order payment with managed checkout URL', async () => {
+      mock.prisma.payment.findUnique.mockResolvedValue(null);
+      mock.prisma.order.findUnique.mockResolvedValue(ORDER_ROW);
+      mock.prisma.payment.findFirst.mockResolvedValue(null);
+      mock.prisma.payment.create.mockResolvedValue(PAYMENT_ROW);
+
+      const result = await service.createPayment('user-1', 'order-1', 'KHQRCC', 'idem-khqrcc-order');
+
+      expect(result.success).toBe(true);
+      expect(result.payment?.paymentUrl).toContain('khqr.cc/api/payment/request');
+      expect(result.payment?.qrCodeData).toBeUndefined();
+      const created = mock.prisma.payment.create.mock.calls[0]?.[0].data;
+      expect(created?.provider).toBe('KHQRCC');
+      expect(created?.status).toBe('PENDING');
+    });
+
+    it('resumes a KHQRCC deposit with checkoutUrl from metadata', async () => {
+      mock.prisma.payment.findUnique.mockResolvedValue(null);
+      const khqrccMetadata = {
+        transactionId: 'khqrcc-txn-789',
+        checkoutUrl: 'https://khqr.cc/api/payment/request/profile?transaction_id=dep-khqrcc-resume&amount=5.00',
+        mode: 'managed_checkout'
+      };
+      const activeRow = {
+        ...PAYMENT_ROW,
+        provider: 'KHQRCC',
+        orderId: null,
+        reference: 'dep-khqrcc-resume',
+        idempotencyKey: 'idem-dep-khqrcc-resume',
+        amount: new Prisma.Decimal('5.00'),
+        metadata: khqrccMetadata
+      };
+      mock.prisma.payment.findFirst.mockResolvedValue(activeRow);
+
+      const result = await service.createDepositPayment('user-1', '5.00', 'USD', 'idem-dep-khqrcc-resume');
+
+      expect(result.success).toBe(true);
+      expect(result.resumed).toBe(true);
+      expect(result.payment?.paymentUrl).toBe(khqrccMetadata.checkoutUrl);
+      expect(mock.prisma.payment.create).not.toHaveBeenCalled();
+    });
+
+    it('wallet credited exactly once for KHQRCC deposit via double verification', async () => {
+      const khqrccProviderForVerify = factory.getProvider('KHQRCC');
+      let verifyCount = 0;
+      vi.spyOn(khqrccProviderForVerify, 'verifyPayment').mockImplementation(async () => {
+        verifyCount++;
+        if (verifyCount === 1) {
+          return {
+            success: true,
+            status: 'SUCCEEDED',
+            providerPaymentId: 'khqrcc-txn-verify',
+            providerTransactionHash: 'khqrcc-hash-verify',
+            paidAt: new Date()
+          };
+        }
+        return { success: false, status: 'PENDING', error: 'already processed' };
+      });
+
+      mock.prisma.payment.findUnique
+        .mockResolvedValueOnce({ ...PAYMENT_ROW, orderId: null, provider: 'KHQRCC', reference: 'dep-khqrcc-verify', idempotencyKey: 'idem-dep-khqrcc-verify' })
+        .mockResolvedValue({ ...PAYMENT_ROW, orderId: null, provider: 'KHQRCC', reference: 'dep-khqrcc-verify', idempotencyKey: 'idem-dep-khqrcc-verify' });
+
+      let claimed = false;
+      mock.prisma.payment.updateMany.mockImplementation(async () => {
+        if (claimed) return { count: 0 };
+        claimed = true;
+        return { count: 1 };
+      });
+
+      const first = await service.verifyPayment('payment-1');
+      const second = await service.verifyPayment('payment-1');
+
+      expect(first.success).toBe(true);
+      expect(first.status).toBe('SUCCEEDED');
+      expect(walletService.creditDeposit).toHaveBeenCalledTimes(1);
+    });
+
+    it('order fulfilled exactly once for KHQRCC order payment via double verification', async () => {
+      const khqrccProviderForVerify = factory.getProvider('KHQRCC');
+      let verifyCount = 0;
+      vi.spyOn(khqrccProviderForVerify, 'verifyPayment').mockImplementation(async () => {
+        verifyCount++;
+        if (verifyCount === 1) {
+          return {
+            success: true,
+            status: 'SUCCEEDED',
+            providerPaymentId: 'khqrcc-txn-order',
+            providerTransactionHash: 'khqrcc-hash-order',
+            paidAt: new Date()
+          };
+        }
+        return { success: false, status: 'PENDING', error: 'already processed' };
+      });
+
+      mock.prisma.payment.findUnique
+        .mockResolvedValueOnce({ ...PAYMENT_ROW, provider: 'KHQRCC' })
+        .mockResolvedValue({ ...PAYMENT_ROW, provider: 'KHQRCC' });
+      mock.prisma.order.findUnique.mockResolvedValue(ORDER_ROW);
+      mock.prisma.productStock.findMany.mockResolvedValue([]);
+
+      let claimed = false;
+      mock.prisma.payment.updateMany.mockImplementation(async () => {
+        if (claimed) return { count: 0 };
+        claimed = true;
+        return { count: 1 };
+      });
+
+      const first = await service.verifyPayment('payment-1');
+      const second = await service.verifyPayment('payment-1');
+
+      expect(first.success).toBe(true);
+      const paidUpdates = mock.prisma.order.update.mock.calls.filter(
+        (call) => call[0]?.data?.status === 'PAID'
+      );
+      expect(paidUpdates).toHaveLength(1);
+    });
+
+    it('KHQRCC expired payment does not credit wallet', async () => {
+      mock.prisma.payment.findUnique.mockResolvedValue({
+        ...PAYMENT_ROW,
+        orderId: null,
+        provider: 'KHQRCC',
+        expiresAt: new Date(Date.now() - 60_000)
+      });
+
+      const result = await service.verifyPayment('payment-1');
+
+      expect(result.success).toBe(false);
+      expect(result.status).toBe('EXPIRED');
+      expect(walletService.creditDeposit).not.toHaveBeenCalled();
+    });
+
+    it('KHQRCC failed payment releases reserved stock', async () => {
+      const khqrccProviderForVerify = factory.getProvider('KHQRCC');
+      vi.spyOn(khqrccProviderForVerify, 'verifyPayment').mockResolvedValue({
+        success: false,
+        status: 'FAILED',
+        providerPaymentId: 'khqrcc-txn-fail',
+        error: 'Payment cancelled'
+      });
+
+      mock.prisma.payment.findUnique.mockResolvedValue({ ...PAYMENT_ROW, provider: 'KHQRCC' });
+      mock.prisma.order.findUnique.mockResolvedValue(ORDER_ROW);
+      mock.prisma.productStock.findMany.mockResolvedValue([{ id: 'stock-fail', orderId: 'order-1', status: 'RESERVED' }]);
+
+      await service.verifyPayment('payment-1');
+
+      const released = mock.prisma.productStock.updateMany.mock.calls.filter(
+        (call) => call[0]?.data?.status === 'AVAILABLE'
+      );
+      expect(released).toHaveLength(1);
+      const orderDowngrade = mock.prisma.order.update.mock.calls.filter(
+        (call) => call[0]?.data?.status === 'DRAFT'
+      );
+      expect(orderDowngrade).toHaveLength(1);
+    });
+
+    it('provider KHQRCC is registered in the default factory', () => {
+      const p = factory.getProvider('KHQRCC');
+      expect(p).toBeDefined();
+      expect(p.providerType).toBe('KHQRCC');
+      expect(p.isAvailable()).toBe(true);
+    });
+  });
+
   describe('getPaymentStatus', () => {
     it('reports the payment to the owning user only', async () => {
       mock.prisma.payment.findUnique.mockResolvedValue(PAYMENT_ROW);
