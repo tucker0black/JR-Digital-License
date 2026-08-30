@@ -158,6 +158,19 @@ export class KHQRCCPaymentProvider extends BasePaymentProvider {
 
       const paymentUrl = this.buildCheckoutUrl(transactionId, amount, successUrl, remark);
 
+      const urlObj = new URL(paymentUrl);
+      const hostname = urlObj.hostname;
+
+      console.info('[KHQRCCPaymentProvider] createPayment diagnostics', {
+        provider: 'KHQRCC',
+        reference: params.reference,
+        paymentUrl: paymentUrl,
+        paymentUrlHostname: hostname,
+        gatewayUrl: this.config.gatewayUrl,
+        profileId: this.config.profileId,
+        successUrlConfigured: !!process.env.KHQRCC_SUCCESS_URL
+      });
+
       return {
         success: true,
         paymentId: params.reference,
@@ -224,54 +237,150 @@ export class KHQRCCPaymentProvider extends BasePaymentProvider {
       }
 
       const rawBody = await response.text();
-      let parsed: KHQRCCVerifyResponse;
+      const bodyLength = rawBody?.length ?? 0;
+
+      // Safe: determine response type without exposing secrets
+      let jsonParsed: unknown;
+      let jsonError: unknown;
+      let isJson = false;
       try {
-        parsed = rawBody ? JSON.parse(rawBody) : {};
-      } catch {
-        return {
-          success: false,
-          status: 'PENDING',
-          providerPaymentId: transactionId,
-          error: 'KHQR.cc payment waiting — verification returned invalid JSON'
-        };
+        jsonParsed = rawBody ? JSON.parse(rawBody) : {};
+        jsonError = undefined;
+        isJson = true;
+      } catch (e) {
+        jsonParsed = undefined;
+        jsonError = e;
+        isJson = false;
       }
 
-      if (parsed.responseCode !== 0 || !parsed.data) {
-        return {
-          success: false,
-          status: 'PENDING',
-          providerPaymentId: transactionId,
-          error: `KHQR.cc payment waiting — ${parsed.responseMessage || 'not confirmed'}`
-        };
-      }
+      // Log diagnostic information (safe - no secrets, always in production)
+      const contentType = response.headers?.get?.('content-type') || 'unknown';
+      const isJsonObj = typeof jsonParsed === 'object' && jsonParsed !== null;
+      const responseBodyType = isJsonObj ? 'JSON-object' : 'non-JSON';
 
-      const txStatus = parsed.data.status?.toUpperCase();
-      if (txStatus === 'SUCCESS' || txStatus === 'COMPLETED') {
-        return {
-          success: true,
-          status: 'SUCCEEDED',
-          providerPaymentId: transactionId,
-          paidAt: new Date(),
-          amount: parsed.data.amount?.toString(),
-          providerTransactionHash: parsed.data.hash
-        };
-      }
-
-      if (txStatus === 'FAILED' || txStatus === 'CANCELLED') {
-        return {
-          success: false,
-          status: 'FAILED',
-          providerPaymentId: transactionId,
-          error: `Payment ${txStatus.toLowerCase()}`
-        };
-      }
-
-      return {
-        success: false,
-        status: 'PENDING',
-        providerPaymentId: transactionId,
-        error: `Payment waiting — status: ${txStatus || 'unknown'}`
+      // Extract structured data for logging (never secrets)
+      const diag: Record<string, unknown> = {
+        verifyUrl: verifyUrl,
+        httpMethod: 'POST',
+        httpStatus: response.status,
+        contentType,
+        bodyLength,
+        isJson: isJsonObj,
+        responseBodyType,
       };
+
+      if (isJsonObj) {
+        const p = jsonParsed as Record<string, unknown>;
+        // Log top-level keys only (no values that could contain secrets)
+        const topLevelKeys = Object.keys(p).filter(
+          k => !['hash', 'secret', 'token', 'key', 'signature', 'mac'].includes(k)
+        );
+        diag['topLevelKeys'] = topLevelKeys;
+        if (p['responseCode'] !== undefined) diag['responseCode'] = p['responseCode'];
+        if (p['data'] !== undefined) {
+          diag['dataKeys'] = Object.keys(p['data'] as Record<string, unknown>);
+          // Log status if present in data
+          const data = p['data'] as Record<string, unknown>;
+          if (data['status']) diag['status'] = data['status'];
+        }
+        if (p['status']) diag['status'] = p['status'] as string;
+      } else {
+        // Non-JSON: capture truncated, sanitized preview
+        const bodyPreview = rawBody?.slice(0, 300) || '';
+        // Simple redaction: remove potential auth/cookie headers that might appear in body
+        const sanitizedPreview = bodyPreview.replace(/(Authorization|Cookie):\s*[^\s]+/gi, '$1: [REDACTED]');
+        diag['responsePreview'] = sanitizedPreview.length > 300
+          ? sanitizedPreview.slice(0, 300) + '...'
+          : sanitizedPreview;
+      }
+
+      console.info('[KHQRCCPaymentProvider] verifyPayment diagnostics:', diag);
+
+      if (jsonParsed && typeof jsonParsed === 'object') {
+        const providerData = jsonParsed as KHQRCCVerifyResponse;
+        // Check top-level responseCode first (new format)
+        if (providerData.responseCode === 0 && providerData.data) {
+          console.info('[KHQRCCPaymentProvider] verifyPayment new format detected, responseCode=0, data present');
+          const txStatus = providerData.data.status?.toUpperCase();
+          if (txStatus === 'SUCCESS' || txStatus === 'PAID' || txStatus === 'COMPLETED') {
+            return {
+              success: true,
+              status: 'SUCCEEDED',
+              providerPaymentId: transactionId,
+              paidAt: new Date(),
+              amount: providerData.data.amount?.toString(),
+              providerTransactionHash: providerData.data.hash?.toString()
+            };
+          }
+
+          if (txStatus === 'FAILED' || txStatus === 'CANCELLED') {
+            return {
+              success: false,
+              status: 'FAILED',
+              providerPaymentId: transactionId,
+              error: `Payment ${txStatus.toLowerCase()}`
+            };
+          }
+
+          return {
+            success: false,
+            status: 'PENDING',
+            providerPaymentId: transactionId,
+            error: `Payment waiting — status: ${txStatus || 'unknown'}`
+          };
+        }
+
+        // Check data.status for old format: {"data": {"status": "PAID"}}
+        if (providerData.data?.status) {
+          const txStatus = providerData.data.status.toUpperCase();
+          if (txStatus === 'SUCCESS' || txStatus === 'PAID' || txStatus === 'COMPLETED') {
+            return {
+              success: true,
+              status: 'SUCCEEDED',
+              providerPaymentId: transactionId,
+              paidAt: new Date(),
+              amount: providerData.data.amount?.toString(),
+              providerTransactionHash: providerData.data.hash?.toString()
+            };
+          }
+
+          if (txStatus === 'FAILED' || txStatus === 'CANCELLED') {
+            return {
+              success: false,
+              status: 'FAILED',
+              providerPaymentId: transactionId,
+              error: `Payment ${txStatus.toLowerCase()}`
+            };
+          }
+
+          return {
+            success: false,
+            status: 'PENDING',
+            providerPaymentId: transactionId,
+            error: `Payment waiting — status: ${txStatus || 'unknown'}`
+          };
+        }
+
+        if (providerData.responseCode === 0 && providerData.data) {
+          return {
+            success: true,
+            status: 'SUCCEEDED',
+            providerPaymentId: transactionId,
+            paidAt: new Date(),
+            amount: providerData.data.amount?.toString(),
+            providerTransactionHash: providerData.data.hash?.toString()
+          };
+        }
+
+        if (!(providerData && typeof providerData === 'object') || providerData.responseCode !== 0 || !providerData.data) {
+          return {
+            success: false,
+            status: 'PENDING',
+            providerPaymentId: transactionId,
+            error: `KHQR.cc payment waiting — ${providerData.responseMessage || 'not confirmed'}`
+          };
+        }
+      }
     } catch (error) {
       logProviderError('verification', error, this.config?.secret);
       return {
@@ -281,6 +390,7 @@ export class KHQRCCPaymentProvider extends BasePaymentProvider {
         error: `KHQR.cc payment waiting — ${mapProviderError(error, 'provider connectivity or configuration error', this.config?.secret)}`
       };
     }
+    return { success: false, status: 'PENDING', providerPaymentId: transactionId, error: 'Unexpected verification error' };
   }
 
   async getPaymentStatus(params: GetPaymentStatusParams): Promise<GetPaymentStatusResult> {

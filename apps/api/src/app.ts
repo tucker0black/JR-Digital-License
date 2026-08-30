@@ -1718,7 +1718,10 @@ export function buildApp() {
 
     const { id } = request.params as { id: string };
 
+    const paymentStatusStart = Date.now();
+    console.info('[PAYMENT] GET status start', { paymentId: id });
     let result = await paymentService.getPaymentStatus(id, dbUser.id);
+    console.info('[PAYMENT] GET status response', { paymentId: id, status: result.payment?.status, isExpired: result.isExpired, success: result.success });
     let verificationError: string | undefined;
 
     if (!result.success) {
@@ -1739,8 +1742,13 @@ export function buildApp() {
       return reply.status(404).send({ error: result.error || 'Payment not found' });
     }
 
-    if (result.payment?.status === 'PENDING' && !result.isExpired) {
+    const conditionCallsVerify = result.payment?.status === 'PENDING' && !result.isExpired;
+    console.info('[PAYMENT] verification condition', { paymentId: id, status: result.payment?.status, isExpired: result.isExpired, callsVerify: conditionCallsVerify });
+
+    if (conditionCallsVerify) {
+      console.info('[PAYMENT] verification attempt', { paymentId: id, provider: result.payment?.provider, status: result.payment?.status, isExpired: result.isExpired });
       const verification = await paymentService.verifyPayment(id);
+      console.info('[PAYMENT] verification result', { paymentId: id, resultStatus: verification.status, resultSuccess: verification.success, error: verification.error });
       verificationError = verification.error;
       result = await paymentService.getPaymentStatus(id, dbUser.id);
     }
