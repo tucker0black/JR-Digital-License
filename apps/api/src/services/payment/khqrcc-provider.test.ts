@@ -317,6 +317,25 @@ describe('KHQRCCPaymentProvider.verifyPayment', () => {
     expect(result.status).toBe('PENDING');
   });
 
+  it('returns SUCCEEDED when check-trans confirms success with missing data.status', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      status: 200,
+      text: async () => JSON.stringify({
+        responseCode: 0,
+        data: { amount: 5.0, hash: 'abc123' }
+      })
+    }));
+
+    const provider = new KHQRCCPaymentProvider();
+    const result = await provider.verifyPayment({
+      providerPaymentId: 'TXN-001'
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.status).toBe('SUCCEEDED');
+    expect(result.paidAt).toBeInstanceOf(Date);
+  });
+
   it('returns FAILED when no providerPaymentId', async () => {
     const provider = new KHQRCCPaymentProvider();
     const result = await provider.verifyPayment({});

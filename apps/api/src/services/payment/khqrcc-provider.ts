@@ -322,12 +322,19 @@ export class KHQRCCPaymentProvider extends BasePaymentProvider {
             };
           }
 
-          return {
-            success: false,
-            status: 'PENDING',
-            providerPaymentId: transactionId,
-            error: `Payment waiting — status: ${txStatus || 'unknown'}`
-          };
+          // Only return PENDING if status is explicitly 'pending'.
+          // For missing or any other status value, fall through to the
+          // SUCCEEDED check below (responseCode 0 + data present = confirmed payment).
+          if (txStatus === 'PENDING') {
+            return {
+              success: false,
+              status: 'PENDING',
+              providerPaymentId: transactionId,
+              error: `Payment waiting — status: ${txStatus || 'unknown'}`
+            };
+          }
+          // Fall through: responseCode 0 + data present means the payment
+          // was confirmed successfully by the KHQRCC provider.
         }
 
         // Check data.status for old format: {"data": {"status": "PAID"}}
